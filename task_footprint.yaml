@@ -1,0 +1,14 @@
+# Оценки фазы 1, не замер на машине.
+module: scout
+defaults:
+  class: light
+tasks:
+  - queue: scout
+    pattern: "modules.scout.api.tasks.*"
+    class: medium
+    ram_mb: 256
+    cpu_units: 1
+    gpu_required: false
+    vram_mb: 0
+    max_parallel: 2
+    cpu_fallback: true

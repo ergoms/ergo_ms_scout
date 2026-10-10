@@ -1,0 +1,7 @@
+title: "SCOUT"
+summary: "Collecter des enregistrements depuis une page HTML après confirmation du plan"
+commands:
+  collect:
+    summary: "Créer une tâche à partir d’une adresse et mettre le chargement en file"
+  approve-run:
+    summary: "Confirmer le plan du lancement et mettre l’extraction en file"

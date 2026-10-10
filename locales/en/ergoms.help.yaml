@@ -1,0 +1,7 @@
+title: "SCOUT"
+summary: "Collect records from an HTML page after the plan is confirmed"
+commands:
+  collect:
+    summary: "Create a job from a page address and queue the download"
+  approve-run:
+    summary: "Confirm the run plan and queue record extraction"

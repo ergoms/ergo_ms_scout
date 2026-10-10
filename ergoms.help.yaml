@@ -1,0 +1,14 @@
+module: scout
+title: "SCOUT"
+summary: "Сбор записей с HTML-страницы после подтверждения плана"
+
+commands:
+  collect:
+    summary: "Создать задание по адресу и поставить загрузку страницы в очередь"
+  approve-run:
+    summary: "Подтвердить план запуска и поставить извлечение записей в очередь"
+
+notes:
+  - "Вызов: ergoms scout:collect --url http://example.com --field title=css:.title --user-public-id <uuid>"
+  - "Повторяющееся поле: имя со звёздочкой, например title*=css:.card .title"
+  - "Для сбора должны быть запущены база, брокер очереди и ergoms start-worker --module=scout"
