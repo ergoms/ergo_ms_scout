@@ -40,8 +40,8 @@ from .errors import ScoutError
 from .plan import normalize_plan, plan_hash
 
 
-def create_job(*, user_public_id, title: str, seed_urls, fields) -> Job:
-    plan = normalize_plan(seed_urls, fields)
+def create_job(*, user_public_id, title: str, seed_urls, fields, record=None) -> Job:
+    plan = normalize_plan(seed_urls, fields, record=record)
     clean_title = (title or '').strip() or _('Сбор')
     if len(clean_title) > 200:
         raise ScoutError('invalid', _('Название слишком длинное'))
@@ -51,14 +51,15 @@ def create_job(*, user_public_id, title: str, seed_urls, fields) -> Job:
     return job
 
 
-def revise_job(*, job: Job, seed_urls, fields) -> JobRevision:
-    plan = normalize_plan(seed_urls, fields)
+def revise_job(*, job: Job, seed_urls, fields, record=None) -> JobRevision:
+    plan = normalize_plan(seed_urls, fields, record=record)
     with transaction.atomic():
-        if job.runs.filter(status__in=OCCUPYING_STATUSES).exists():
+        locked_job = Job.objects.select_for_update().get(pk=job.pk)
+        if Run.objects.filter(job_revision__job=locked_job, status__in=OCCUPYING_STATUSES).exists():
             raise ScoutError('slot_busy', _('Нельзя менять план, пока сбор не завершён'))
-        current = _latest_revision(job)
+        current = _latest_revision(locked_job)
         number = 1 if current is None else current.revision_number + 1
-        return _create_revision(job, number, plan)
+        return _create_revision(locked_job, number, plan)
 
 
 def explore_job(*, job: Job, user_public_id) -> Run:
@@ -81,7 +82,7 @@ def explore_job(*, job: Job, user_public_id) -> Run:
                 run=run,
                 kind=TASK_FETCH,
                 status=TASK_PENDING,
-                idempotency_key=f'fetch:{url}',
+                idempotency_key=_fetch_key(url),
                 payload={'url': url},
                 fencing_token=1,
             )
@@ -126,6 +127,19 @@ def pause_run(*, run: Run) -> Run:
         locked.status = RUN_PAUSING
         locked.save(update_fields=['status'])
         advance_run(locked)
+    return Run.objects.get(pk=run.pk)
+
+
+def resume_run(*, run: Run) -> Run:
+    with transaction.atomic():
+        locked = Run.objects.select_for_update().select_related('job_revision').get(pk=run.pk)
+        if locked.status != RUN_PAUSED:
+            raise ScoutError('invalid_state', _('Продолжить можно сбор на паузе'))
+        revision = locked.job_revision
+        if not revision.approved_plan_hash or revision.approved_plan_hash != revision.plan_hash:
+            raise ScoutError('approval_required', _('Сбор без подтверждения этого плана запрещён'))
+        locked.status = RUN_RUNNING
+        locked.save(update_fields=['status'])
     return Run.objects.get(pk=run.pk)
 
 
@@ -222,6 +236,7 @@ def _create_revision(job: Job, number: int, plan: dict) -> JobRevision:
         revision_number=number,
         seed_urls=plan['seed_urls'],
         fields=plan['fields'],
+        record=plan['record'] or {},
         limits=plan['limits'],
         plan_hash=digest,
     )
@@ -237,6 +252,11 @@ def _create_revision(job: Job, number: int, plan: dict) -> JobRevision:
         content_hash=_sha(plan['fields']),
     )
     return revision
+
+
+def _fetch_key(url: str) -> str:
+    digest = hashlib.sha256(url.encode('utf-8')).hexdigest()
+    return f'fetch:{digest}'
 
 
 def _lock_single_slot() -> None:

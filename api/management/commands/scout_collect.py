@@ -14,6 +14,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--url', action='append', required=True)
         parser.add_argument('--field', action='append', required=True)
+        parser.add_argument('--record', default='')
         parser.add_argument('--user-public-id', required=True)
         parser.add_argument('--title', default='Сбор')
 
@@ -26,6 +27,7 @@ class Command(BaseCommand):
                 title=options['title'],
                 seed_urls=options['url'],
                 fields=fields,
+                record=_parse_record(options['record']),
             )
             run = explore_job(job=job, user_public_id=user.public_id)
         except ScoutError as exc:
@@ -45,6 +47,16 @@ def _user(public_id: str):
     if user is None:
         raise CommandError('Пользователь с таким public_id не найден.')
     return user
+
+
+def _parse_record(raw: str):
+    text = (raw or '').strip()
+    if not text:
+        return None
+    kind, colon, selector = text.partition(':')
+    if not colon or kind not in ('css', 'xpath') or not selector:
+        raise CommandError('Карточка задаётся как css:селектор или xpath:селектор.')
+    return {'kind': kind, 'selector': selector}
 
 
 def _parse_field(raw: str) -> dict:

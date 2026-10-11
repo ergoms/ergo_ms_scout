@@ -23,6 +23,7 @@ class JobRevision(PublicIdMixin, models.Model):
     revision_number = models.PositiveIntegerField()
     seed_urls = models.JSONField(default=list)
     fields = models.JSONField(default=list)
+    record = models.JSONField(default=dict, blank=True)
     limits = models.JSONField(default=dict)
     plan_hash = models.CharField(max_length=64)
     approved_plan_hash = models.CharField(max_length=64, blank=True, default='')
@@ -116,6 +117,7 @@ class PageSnapshot(PublicIdMixin, models.Model):
     content_path = models.CharField(max_length=300)
     byte_size = models.PositiveIntegerField(default=0)
     content_type = models.CharField(max_length=120, blank=True, default='')
+    charset = models.CharField(max_length=40, blank=True, default='')
     fetched_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -158,7 +160,7 @@ class Evidence(PublicIdMixin, models.Model):
     snapshot = models.ForeignKey(PageSnapshot, on_delete=models.CASCADE, related_name='evidence')
     field_path = models.CharField(max_length=80)
     source_url = models.TextField()
-    locator = models.CharField(max_length=500)
+    locator = models.TextField()
     raw_value = models.TextField(blank=True, default='')
     normalized_value = models.TextField(blank=True, default='')
     extractor_id = models.CharField(max_length=80)

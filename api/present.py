@@ -1,6 +1,6 @@
 """Ответы API без числовых id базы."""
 
-from .services.journal import journal_lines
+from .services.journal import journal_lines, stored_messages
 
 
 def job_payload(job) -> dict:
@@ -18,6 +18,7 @@ def revision_payload(revision) -> dict:
         'public_id': str(revision.public_id),
         'revision_number': revision.revision_number,
         'seed_urls': revision.seed_urls,
+        'record': revision.record or None,
         'fields': revision.fields,
         'limits': revision.limits,
         'plan_hash': revision.plan_hash,
@@ -37,6 +38,7 @@ def run_payload(run, *, preview=None) -> dict:
         'snapshot_count': run.snapshots.count(),
         'record_count': run.records.count(),
         'journal': journal_lines(run),
+        'events': stored_messages(run),
         'tasks': [
             {
                 'public_id': str(task.public_id),

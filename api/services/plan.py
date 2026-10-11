@@ -13,7 +13,7 @@ _NAME = re.compile(r'^[a-z][a-z0-9_]{0,40}$')
 _KINDS = {'css', 'xpath'}
 
 
-def normalize_plan(seed_urls, fields, limits=None) -> dict:
+def normalize_plan(seed_urls, fields, limits=None, record=None) -> dict:
     urls = []
     seen = set()
     for raw in seed_urls or []:
@@ -41,6 +41,7 @@ def normalize_plan(seed_urls, fields, limits=None) -> dict:
     if len(urls) > max_pages:
         raise ScoutError('invalid', _('В первой версии не больше %(count)s адресов') % {'count': max_pages})
 
+    clean_record = _clean_record(record)
     clean_fields = []
     names = set()
     for item in fields or []:
@@ -49,6 +50,9 @@ def normalize_plan(seed_urls, fields, limits=None) -> dict:
         name = str(item.get('name') or '').strip()
         kind = str(item.get('kind') or '').strip()
         selector = str(item.get('selector') or '').strip()
+        scope = str(item.get('scope') or '').strip()
+        if scope not in ('page', 'record'):
+            scope = 'record' if clean_record else 'page'
         if not _NAME.match(name):
             raise ScoutError('invalid', _('Имя поля: латиница, цифры и подчёркивание'))
         if name in names:
@@ -57,11 +61,14 @@ def normalize_plan(seed_urls, fields, limits=None) -> dict:
             raise ScoutError('invalid', _('Тип правила: css или xpath'))
         if not selector or len(selector) > 500:
             raise ScoutError('invalid', _('Селектор пустой или слишком длинный'))
+        if scope == 'record' and clean_record is None:
+            raise ScoutError('invalid', _('Для поля карточки нужен селектор карточки'))
         names.add(name)
         clean_fields.append({
             'name': name,
             'kind': kind,
             'selector': selector,
+            'scope': scope,
             'many': bool(item.get('many')),
         })
     if not clean_fields:
@@ -71,9 +78,26 @@ def normalize_plan(seed_urls, fields, limits=None) -> dict:
 
     return {
         'seed_urls': urls,
+        'record': clean_record,
         'fields': clean_fields,
         'limits': merged_limits,
     }
+
+
+def _clean_record(record) -> dict | None:
+    if not record:
+        return None
+    if not isinstance(record, dict):
+        raise ScoutError('invalid', _('Карточка задана неверно'))
+    selector = str(record.get('selector') or '').strip()
+    if not selector:
+        return None
+    kind = str(record.get('kind') or 'css').strip()
+    if kind not in _KINDS:
+        raise ScoutError('invalid', _('Тип правила: css или xpath'))
+    if len(selector) > 500:
+        raise ScoutError('invalid', _('Селектор пустой или слишком длинный'))
+    return {'kind': kind, 'selector': selector}
 
 
 def plan_hash(plan: dict) -> str:

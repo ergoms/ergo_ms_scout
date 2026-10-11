@@ -26,6 +26,7 @@ from .services.runs import (
     create_job,
     explore_job,
     pause_run,
+    resume_run,
     revise_job,
     start_run,
 )
@@ -55,6 +56,7 @@ class JobListCreateView(BaseAPIView):
                 title=request.data.get('title') or '',
                 seed_urls=request.data.get('seed_urls') or [],
                 fields=request.data.get('fields') or [],
+                record=request.data.get('record'),
             )
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))
@@ -78,6 +80,7 @@ class JobDetailView(BaseAPIView):
                 job=job,
                 seed_urls=request.data.get('seed_urls') or [],
                 fields=request.data.get('fields') or [],
+                record=request.data.get('record'),
             )
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))
@@ -107,13 +110,7 @@ class RunDetailView(BaseAPIView):
             runs_for(request.user).prefetch_related('tasks', 'snapshots'),
             public_id=public_id,
         )
-        preview = None
-        if run.status == RUN_AWAITING:
-            try:
-                preview = preview_rows(run)
-            except ScoutError as exc:
-                preview = {'error': error_payload(exc)}
-        return Response(run_payload(run, preview=preview))
+        return Response(_run_body(run))
 
 
 class RunApproveView(BaseAPIView):
@@ -127,7 +124,7 @@ class RunApproveView(BaseAPIView):
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))
         audit_run('scout.run.approved', request, run, run.job_revision.job.title)
-        return Response(run_payload(run))
+        return Response(_run_body(run))
 
 
 class RunStartView(BaseAPIView):
@@ -154,6 +151,19 @@ class RunPauseView(BaseAPIView):
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))
         return Response(run_payload(run))
+
+
+class RunResumeView(BaseAPIView):
+    permission_classes = [IsAuthenticated, CanRunScout]
+
+    def post(self, request, public_id):
+        run = get_object_or_404(runs_for(request.user), public_id=public_id)
+        try:
+            run = resume_run(run=run)
+        except ScoutError as exc:
+            return Response(error_payload(exc), status=error_status(exc))
+        schedule_publish(run.public_id)
+        return Response(run_payload(run), status=202)
 
 
 class RunCancelView(BaseAPIView):
@@ -189,3 +199,13 @@ class RunExportView(BaseAPIView):
             return Response(error_payload(exc), status=error_status(exc))
         audit_run('scout.export.created', request, run, filename)
         return Response({'download_url': url, 'filename': filename, 'kind': kind})
+
+
+def _run_body(run):
+    preview = None
+    if run.status == RUN_AWAITING:
+        try:
+            preview = preview_rows(run)
+        except ScoutError as exc:
+            preview = {'error': error_payload(exc)}
+    return run_payload(run, preview=preview)

@@ -11,6 +11,7 @@ from .views import (
     RunExportView,
     RunPauseView,
     RunRecordsView,
+    RunResumeView,
     RunStartView,
 )
 
@@ -23,6 +24,7 @@ urlpatterns = [
     path('runs/<uuid:public_id>/approve/', RunApproveView.as_view(), name='scout-run-approve'),
     path('runs/<uuid:public_id>/start/', RunStartView.as_view(), name='scout-run-start'),
     path('runs/<uuid:public_id>/pause/', RunPauseView.as_view(), name='scout-run-pause'),
+    path('runs/<uuid:public_id>/resume/', RunResumeView.as_view(), name='scout-run-resume'),
     path('runs/<uuid:public_id>/cancel/', RunCancelView.as_view(), name='scout-run-cancel'),
     path('runs/<uuid:public_id>/records/', RunRecordsView.as_view(), name='scout-run-records'),
     path('runs/<uuid:public_id>/export/', RunExportView.as_view(), name='scout-run-export'),

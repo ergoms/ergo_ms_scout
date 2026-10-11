@@ -8,12 +8,17 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from ..models import Attempt, Evidence, PageSnapshot, Record, Task
+from ..models import Attempt, Evidence, PageSnapshot, Record, Run, Task
 from .constants import (
     CLAIMABLE_RUN_STATUSES,
     LEASE_SECONDS,
     MAX_ATTEMPTS,
     REPUBLISH_AFTER_SECONDS,
+    RUN_CANCELLING,
+    RUN_CANCELLED,
+    RUN_COMPLETED,
+    RUN_COMPLETED_WITH_ERRORS,
+    RUN_FAILED,
     TASK_CANCELLED,
     TASK_EXTRACT,
     TASK_FAILED,
@@ -78,18 +83,30 @@ def publish_ready(run_public_id=None) -> None:
 
 def recover_expired_leases() -> int:
     now = timezone.now()
-    expired = Task.objects.filter(status=TASK_LEASED, lease_until__lt=now)
+    expired = list(
+        Task.objects.filter(status=TASK_LEASED, lease_until__lt=now).values_list('pk', 'run_id')
+    )
     recovered = 0
-    for task in expired:
+    for task_id, run_id in expired:
         with transaction.atomic():
-            locked = Task.objects.select_for_update().get(pk=task.pk)
+            run = Run.objects.select_for_update().get(pk=run_id)
+            locked = Task.objects.select_for_update().get(pk=task_id)
             if locked.status != TASK_LEASED or not locked.lease_until or locked.lease_until >= now:
                 continue
             previous = locked.fencing_token
-            locked.status = TASK_PENDING
             locked.fencing_token = previous + 1
             locked.published_at = None
             locked.lease_until = None
+            if run.status in (
+                RUN_CANCELLING,
+                RUN_CANCELLED,
+                RUN_COMPLETED,
+                RUN_COMPLETED_WITH_ERRORS,
+                RUN_FAILED,
+            ):
+                locked.status = TASK_CANCELLED
+            else:
+                locked.status = TASK_PENDING
             locked.save(update_fields=['status', 'fencing_token', 'published_at', 'lease_until'])
             Attempt.objects.filter(
                 task=locked,
@@ -101,6 +118,7 @@ def recover_expired_leases() -> int:
                 error_message='Исполнитель не подтвердил попытку',
                 finished_at=now,
             )
+            advance_run(run)
             recovered += 1
     return recovered
 
@@ -153,6 +171,8 @@ def _claim(task_public_id: str, fencing_token: int):
             return None
         if task.status not in (TASK_PENDING, TASK_RETRY_WAIT):
             return None
+        if task.status == TASK_RETRY_WAIT and task.next_retry_at and task.next_retry_at > timezone.now():
+            return None
         if task.run.status not in CLAIMABLE_RUN_STATUSES:
             return None
         task.fencing_token += 1
@@ -184,6 +204,7 @@ def _fetch(task: Task, token: int) -> None:
                 'content_path': relative,
                 'byte_size': len(result['body']),
                 'content_type': result['content_type'],
+                'charset': result.get('charset') or '',
             },
         )
         append_event(
@@ -201,7 +222,13 @@ def _extract(task: Task, token: int) -> None:
     )
     body = read_snapshot_bytes(snapshot.content_path)
     revision = task.run.job_revision
-    rows = extract_html(body, revision.fields)
+    rows = extract_html(
+        body,
+        revision.fields,
+        record=revision.record or None,
+        content_type=snapshot.content_type,
+        charset=snapshot.charset,
+    )
     schema = revision.schema_revision
     rules = revision.rules_revision
 
@@ -230,7 +257,15 @@ def _extract(task: Task, token: int) -> None:
                 )
                 for item in row['evidence']
             ])
-        for line in describe_extract(body, revision.fields, len(rows)):
+        for line in describe_extract(
+            body,
+            revision.fields,
+            len(rows),
+            status=task.run.status,
+            approved=True,
+            content_type=snapshot.content_type,
+            charset=snapshot.charset,
+        ):
             append_event(task.run_id, line)
 
     _finish(task, token, write)
@@ -264,9 +299,12 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
         locked.error_message = text
         if retryable and locked.attempt_count < MAX_ATTEMPTS:
             locked.status = TASK_RETRY_WAIT
-            locked.next_retry_at = timezone.now() + timedelta(seconds=2 * locked.attempt_count)
+            delay = 2 * locked.attempt_count
+            locked.next_retry_at = timezone.now() if inline_runner() else timezone.now() + timedelta(seconds=delay)
             locked.published_at = None
             locked.lease_until = None
+            if not inline_runner():
+                _schedule_retry(locked.run.public_id, delay)
         else:
             locked.status = TASK_FAILED
             locked.lease_until = None
@@ -280,3 +318,14 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
         if locked.status == TASK_FAILED:
             append_event(locked.run_id, f'Шаг {locked.kind} не выполнен: {text}')
         advance_run(locked.run)
+
+
+def _schedule_retry(run_public_id, delay: int) -> None:
+    run_id = str(run_public_id)
+
+    def _go():
+        from ..tasks import dispatch_scout_pending
+
+        dispatch_scout_pending.apply_async(args=[run_id], countdown=max(delay, 1))
+
+    transaction.on_commit(_go)

@@ -1,7 +1,7 @@
 """Константы координатора. Будущие очереди не создаются в первой фазе."""
 
 EXTRACTOR_ID = 'scout.extractor.html'
-EXTRACTOR_VERSION = '1'
+EXTRACTOR_VERSION = '2'
 PROTOCOL_VERSION = 1
 
 TASK_FETCH = 'fetch'
