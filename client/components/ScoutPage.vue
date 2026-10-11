@@ -221,7 +221,8 @@ async function explore() {
 
 async function act(endpoint, label) {
   if (!query.value.run || loading.value) return
-  if (dirty.value && endpoint !== scoutEndpoints.resume) return
+  const requiresSavedPlan = endpoint === scoutEndpoints.approve || endpoint === scoutEndpoints.start
+  if (dirty.value && requiresSavedPlan) return
   const runId = query.value.run
   loading.value = true
   try {
