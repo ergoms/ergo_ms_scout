@@ -63,6 +63,14 @@ const tableTitle = computed(() => (
   records.value.length ? t('scout.records') : t('scout.preview')
 ))
 
+const journal = computed(() => (
+  Array.isArray(run.value?.journal) ? run.value.journal : []
+))
+
+watch(() => query.value.job, (publicId) => {
+  if (publicId) loadJob(publicId)
+}, { immediate: true })
+
 watch(() => query.value.run, (publicId) => {
   if (publicId) loadRun(publicId)
 }, { immediate: true })
@@ -87,6 +95,30 @@ function payload() {
       selector: field.selector.trim(),
       many: field.many,
     })),
+  }
+}
+
+function applyJob(job) {
+  title.value = job?.title || ''
+  const revision = job?.revision
+  url.value = Array.isArray(revision?.seed_urls) ? (revision.seed_urls[0] || '') : ''
+  const savedFields = Array.isArray(revision?.fields) ? revision.fields : []
+  if (!savedFields.length) return
+  fields.value = savedFields.map((field) => ({
+    name: field.name || '',
+    kind: field.kind === 'xpath' ? 'xpath' : 'css',
+    selector: field.selector || '',
+    many: Boolean(field.many),
+  }))
+}
+
+async function loadJob(publicId) {
+  try {
+    const response = await apiClient.get(scoutEndpoints.job(publicId))
+    if (!response.success || query.value.job !== publicId) return
+    applyJob(response.data)
+  } catch (error) {
+    logError('SCOUT: не удалось прочитать задание', error)
   }
 }
 
@@ -253,6 +285,12 @@ function flattenValues(values, id) {
     </FormCard>
 
     <p v-if="statusLabel" class="mb-3">{{ t('scout.status') }}: {{ statusLabel }}</p>
+    <section v-if="journal.length" class="mb-3">
+      <h2 class="h6">{{ t('scout.journal') }}</h2>
+      <ul class="mb-0">
+        <li v-for="(line, index) in journal" :key="index">{{ line }}</li>
+      </ul>
+    </section>
     <div class="d-flex flex-wrap gap-2 mb-3">
       <button type="button" class="btn btn-primary" :disabled="run?.status !== 'awaiting_confirmation'" @click="act(scoutEndpoints.approve, t('scout.approve'))">
         {{ t('scout.approve') }}

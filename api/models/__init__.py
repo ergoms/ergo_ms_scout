@@ -64,6 +64,7 @@ class Run(PublicIdMixin, models.Model):
     user_public_id = models.UUIDField(db_index=True)
     status = models.CharField(max_length=32, db_index=True)
     error_summary = models.TextField(blank=True, default='')
+    events = models.JSONField(default=list)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)

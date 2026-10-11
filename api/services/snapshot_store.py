@@ -31,4 +31,8 @@ def read_snapshot_bytes(relative_path: str) -> bytes:
     path = (CACHE_DIR / relative_path).resolve()
     if root not in path.parents and path != root:
         raise ValueError('snapshot path escaped cache')
-    return path.read_bytes()
+    body = path.read_bytes()
+    if body.startswith(b'\x1f\x8b'):
+        import gzip
+        body = gzip.decompress(body)
+    return body

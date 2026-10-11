@@ -1,6 +1,9 @@
 """Загрузка HTML с потолком размера. Локальный адрес разрешён для проверочного стенда."""
 
+import gzip
+import io
 import logging
+import zlib
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -38,7 +41,8 @@ def fetch_html(url: str, *, timeout_seconds: int, max_bytes: int) -> dict:
             status = getattr(response, 'status', None) or response.getcode()
             final_url = response.geturl()
             content_type = response.headers.get('Content-Type', '')
-            body = _read_limited(response, max_bytes)
+            encoding = response.headers.get('Content-Encoding', '')
+            body = _unwrap_content(_read_limited(response, max_bytes), encoding, max_bytes)
     except FetchError:
         raise
     except urlerror.HTTPError as exc:
@@ -61,6 +65,49 @@ def fetch_html(url: str, *, timeout_seconds: int, max_bytes: int) -> dict:
         'content_type': content_type[:120],
         'body': body,
     }
+
+
+def _unwrap_content(body: bytes, content_encoding: str, max_bytes: int) -> bytes:
+    """Сервер может отдать gzip, даже если распаковку не просили. В снимок кладём HTML."""
+    encoding = (content_encoding or '').lower()
+    if body.startswith(b'\x1f\x8b') or 'gzip' in encoding:
+        return _read_capped(_gzip_stream(body), max_bytes)
+    if 'deflate' in encoding:
+        return _read_capped(_deflate_stream(body), max_bytes)
+    if len(body) > max_bytes:
+        raise FetchError('too_large', _('Страница больше допустимого размера'), retryable=False)
+    return body
+
+
+def _gzip_stream(body: bytes):
+    try:
+        return gzip.GzipFile(fileobj=io.BytesIO(body))
+    except OSError as exc:
+        raise FetchError('bad_encoding', _('Сжатый ответ не распаковывается'), retryable=False) from exc
+
+
+def _deflate_stream(body: bytes):
+    try:
+        return io.BytesIO(zlib.decompress(body))
+    except zlib.error:
+        try:
+            return io.BytesIO(zlib.decompress(body, -zlib.MAX_WBITS))
+        except zlib.error as exc:
+            raise FetchError('bad_encoding', _('Сжатый ответ не распаковывается'), retryable=False) from exc
+
+
+def _read_capped(stream, max_bytes: int) -> bytes:
+    try:
+        body = stream.read(max_bytes + 1)
+    except OSError as exc:
+        raise FetchError('bad_encoding', _('Сжатый ответ не распаковывается'), retryable=False) from exc
+    finally:
+        close = getattr(stream, 'close', None)
+        if close:
+            close()
+    if len(body) > max_bytes:
+        raise FetchError('too_large', _('Страница больше допустимого размера'), retryable=False)
+    return body
 
 
 def _read_limited(response, max_bytes: int) -> bytes:

@@ -1,5 +1,7 @@
 """Ответы API без числовых id базы."""
 
+from .services.journal import journal_lines
+
 
 def job_payload(job) -> dict:
     revision = job.revisions.order_by('-revision_number').first()
@@ -34,6 +36,7 @@ def run_payload(run, *, preview=None) -> dict:
         and run.job_revision.approved_plan_hash == run.job_revision.plan_hash,
         'snapshot_count': run.snapshots.count(),
         'record_count': run.records.count(),
+        'journal': journal_lines(run),
         'tasks': [
             {
                 'public_id': str(task.public_id),

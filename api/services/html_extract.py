@@ -62,6 +62,11 @@ def extract_html(body: bytes, rules: list[dict]) -> list[dict]:
     return rows
 
 
+def selector_match_count(body: bytes, rule: dict) -> int:
+    root = lxml_html.fromstring(_decode_html(body))
+    return len(_texts(root, rule))
+
+
 def _decode_html(body: bytes) -> str:
     payload = body[3:] if body.startswith(b'\xef\xbb\xbf') else body
     try:

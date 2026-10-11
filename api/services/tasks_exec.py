@@ -26,6 +26,7 @@ from .constants import (
 from .errors import FetchError, ScoutError
 from .html_extract import extract_html
 from .http_fetch import fetch_html
+from .journal import append_event, describe_extract
 from .runs import advance_run
 from .snapshot_store import read_snapshot_bytes, store_snapshot_bytes
 
@@ -185,6 +186,10 @@ def _fetch(task: Task, token: int) -> None:
                 'content_type': result['content_type'],
             },
         )
+        append_event(
+            task.run_id,
+            f'Страница скачана: HTTP {result["status"]}, {len(result["body"])} байт.',
+        )
 
     _finish(task, token, write)
 
@@ -225,6 +230,8 @@ def _extract(task: Task, token: int) -> None:
                 )
                 for item in row['evidence']
             ])
+        for line in describe_extract(body, revision.fields, len(rows)):
+            append_event(task.run_id, line)
 
     _finish(task, token, write)
 
@@ -270,4 +277,6 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
             error_message=text,
             finished_at=timezone.now(),
         )
+        if locked.status == TASK_FAILED:
+            append_event(locked.run_id, f'Шаг {locked.kind} не выполнен: {text}')
         advance_run(locked.run)
