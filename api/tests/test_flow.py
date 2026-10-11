@@ -227,6 +227,24 @@ class FlowTests(TestCase):
         self.assertEqual(run.status, RUN_COMPLETED)
         self.assertEqual(Record.objects.filter(run=run).count(), 2)
 
+    def test_resume_finishes_when_the_last_task_already_succeeded(self):
+        job = self._job()
+        run = explore_job(job=job, user_public_id=self.user.public_id)
+        publish_ready(str(run.public_id))
+        approve_run(run=run, user_public_id=self.user.public_id)
+        run = start_run(run=run)
+        task = run.tasks.get(kind='extract')
+        claimed = _claim(str(task.public_id), task.fencing_token)
+        self.assertIsNotNone(claimed)
+        run.status = 'pausing'
+        run.save(update_fields=['status'])
+        _finish(task, claimed[1], lambda: None)
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'paused')
+        run = resume_run(run=run)
+        run.refresh_from_db()
+        self.assertEqual(run.status, RUN_COMPLETED)
+
     def test_lost_worker_during_pause_does_not_stay_pausing(self):
         job = self._job()
         run = explore_job(job=job, user_public_id=self.user.public_id)

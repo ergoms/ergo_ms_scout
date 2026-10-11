@@ -42,21 +42,22 @@ from .plan import normalize_plan, plan_hash
 
 def create_job(*, user_public_id, title: str, seed_urls, fields, record=None) -> Job:
     plan = normalize_plan(seed_urls, fields, record=record)
-    clean_title = (title or '').strip() or _('Сбор')
-    if len(clean_title) > 200:
-        raise ScoutError('invalid', _('Название слишком длинное'))
+    clean_title = _clean_title(title)
     with transaction.atomic():
         job = Job.objects.create(user_public_id=user_public_id, title=clean_title)
         _create_revision(job, 1, plan)
     return job
 
 
-def revise_job(*, job: Job, seed_urls, fields, record=None) -> JobRevision:
+def revise_job(*, job: Job, seed_urls, fields, record=None, title=None) -> JobRevision:
     plan = normalize_plan(seed_urls, fields, record=record)
     with transaction.atomic():
         locked_job = Job.objects.select_for_update().get(pk=job.pk)
         if Run.objects.filter(job_revision__job=locked_job, status__in=OCCUPYING_STATUSES).exists():
             raise ScoutError('slot_busy', _('Нельзя менять план, пока сбор не завершён'))
+        if title is not None:
+            locked_job.title = _clean_title(title)
+            locked_job.save(update_fields=['title', 'updated_at'])
         current = _latest_revision(locked_job)
         number = 1 if current is None else current.revision_number + 1
         return _create_revision(locked_job, number, plan)
@@ -140,6 +141,7 @@ def resume_run(*, run: Run) -> Run:
             raise ScoutError('approval_required', _('Сбор без подтверждения этого плана запрещён'))
         locked.status = RUN_RUNNING
         locked.save(update_fields=['status'])
+        _finish_if_idle(locked)
     return Run.objects.get(pk=run.pk)
 
 
@@ -252,6 +254,13 @@ def _create_revision(job: Job, number: int, plan: dict) -> JobRevision:
         content_hash=_sha(plan['fields']),
     )
     return revision
+
+
+def _clean_title(title: str) -> str:
+    clean = (title or '').strip() or _('Сбор')
+    if len(clean) > 200:
+        raise ScoutError('invalid', _('Название слишком длинное'))
+    return clean
 
 
 def _fetch_key(url: str) -> str:

@@ -56,8 +56,9 @@ def selector_match_count(body: bytes, rule: dict, content_type: str = '', charse
 
 
 def decode_html(body: bytes, content_type: str = '', charset: str = '') -> str:
-    if body.startswith(b'\xef\xbb\xbf'):
-        return body.decode('utf-8-sig', errors='replace')
+    bom_text = _decode_bom(body)
+    if bom_text is not None:
+        return bom_text
     chosen = (charset or _header_charset(content_type) or _meta_charset(body)).strip()
     if chosen:
         try:
@@ -71,8 +72,9 @@ def decode_html(body: bytes, content_type: str = '', charset: str = '') -> str:
 
 
 def detected_charset(body: bytes, content_type: str = '') -> str:
-    if body.startswith(b'\xef\xbb\xbf'):
-        return 'utf-8'
+    bom_name = _bom_name(body)
+    if bom_name:
+        return bom_name
     declared = (_header_charset(content_type) or _meta_charset(body)).strip()
     if declared:
         return declared[:40]
@@ -96,11 +98,17 @@ def _containers(root, record):
     if not record or not record.get('selector'):
         return None
     nodes = _nodes(root, {'kind': record.get('kind') or 'css', 'selector': record['selector']}, relative=False)
-    return [node for node in nodes if hasattr(node, 'xpath')]
+    elements = []
+    for node in nodes:
+        if not hasattr(node, 'xpath'):
+            raise ScoutError('selector', 'Селектор карточки должен находить элементы страницы')
+        elements.append(node)
+    return elements
 
 
 def _cell(node, rule: dict, *, relative: bool) -> dict:
-    texts = _texts(node, rule, relative=relative)
+    target = _isolate(node) if relative else node
+    texts = _texts(target, rule, relative=relative)
     if rule.get('many'):
         chosen = texts or ['']
     else:
@@ -167,16 +175,34 @@ def _node_text(node) -> str:
 
 
 def _bind_xpath(selector: str, relative: bool) -> str:
-    text = (selector or '').strip()
-    if not relative:
-        return text
-    if text.startswith('./'):
-        return text
-    if text.startswith('//'):
-        return f'.{text}'
-    if text.startswith('/'):
-        raise ScoutError('selector', 'Абсолютный XPath выходит за карточку')
-    return f'.//{text}'
+    """В карточке выражение выполняется на отдельном дереве, без переписывания формулы."""
+    return (selector or '').strip()
+
+
+def _isolate(node):
+    """Отдельное дерево карточки: абсолютный XPath и union не видят соседние карточки."""
+    from lxml import etree
+    raw = etree.tostring(node, with_tail=False)
+    return lxml_html.fragment_fromstring(raw)
+
+
+def _decode_bom(body: bytes):
+    name = _bom_name(body)
+    if not name:
+        return None
+    if name == 'utf-8':
+        return body.decode('utf-8-sig', errors='replace')
+    return body.decode(name, errors='replace')
+
+
+def _bom_name(body: bytes) -> str:
+    if body.startswith((b'\xff\xfe\x00\x00', b'\x00\x00\xfe\xff')):
+        return 'utf-32'
+    if body.startswith((b'\xff\xfe', b'\xfe\xff')):
+        return 'utf-16'
+    if body.startswith(b'\xef\xbb\xbf'):
+        return 'utf-8'
+    return ''
 
 
 def _header_charset(content_type: str) -> str:

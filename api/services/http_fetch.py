@@ -119,6 +119,8 @@ def _inflate_limited(body: bytes, wbits: int, max_bytes: int) -> bytes:
         tail = decoder.flush()
     except zlib.error as exc:
         raise FetchError('bad_encoding', _('Сжатый ответ не распаковывается'), retryable=False) from exc
+    if not decoder.eof or decoder.unused_data:
+        raise FetchError('bad_encoding', _('Сжатый ответ не распаковывается'), retryable=False)
     if len(out) + len(tail) > max_bytes:
         raise FetchError('too_large', _('Страница больше допустимого размера'), retryable=False)
     out += tail
@@ -126,14 +128,20 @@ def _inflate_limited(body: bytes, wbits: int, max_bytes: int) -> bytes:
 
 
 def _read_capped(stream, max_bytes: int) -> bytes:
+    error = None
+    body = b''
     try:
         body = stream.read(max_bytes + 1)
-    except OSError as exc:
-        raise FetchError('bad_encoding', _('Сжатый ответ не распаковывается'), retryable=False) from exc
-    finally:
-        close = getattr(stream, 'close', None)
-        if close:
+    except (OSError, EOFError) as exc:
+        error = exc
+    close = getattr(stream, 'close', None)
+    if close:
+        try:
             close()
+        except (OSError, EOFError) as exc:
+            error = error or exc
+    if error is not None:
+        raise FetchError('bad_encoding', _('Сжатый ответ не распаковывается'), retryable=False) from error
     if len(body) > max_bytes:
         raise FetchError('too_large', _('Страница больше допустимого размера'), retryable=False)
     return body

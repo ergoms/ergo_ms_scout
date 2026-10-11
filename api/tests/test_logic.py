@@ -60,11 +60,33 @@ class CardExtractTests(SimpleTestCase):
         }])
         self.assertEqual(rows[0]['values']['title']['normalized'], 'Café')
 
-    def test_absolute_xpath_does_not_leave_the_card(self):
+    def test_xpath_union_stays_inside_the_card(self):
+        rows = extract_html(GAP, [{
+            'name': 'bits', 'kind': 'xpath', 'selector': '//b | //span', 'scope': 'record', 'many': True,
+        }], record=RECORD)
+        self.assertEqual(rows[0]['values']['bits']['normalized'], 'A')
+        self.assertEqual(rows[1]['values']['bits']['normalized'], 'B | 200')
+        self.assertNotIn('200', rows[0]['values']['bits']['normalized'])
+
+    def test_xpath_string_reads_each_card(self):
+        rows = extract_html(GAP, [{
+            'name': 'title', 'kind': 'xpath', 'selector': 'string(.//b)', 'scope': 'record', 'many': False,
+        }], record=RECORD)
+        self.assertEqual(
+            [row['values']['title']['normalized'] for row in rows],
+            ['A', 'B', 'C'],
+        )
+
+    def test_scalar_container_is_rejected(self):
         with self.assertRaises(ScoutError):
-            extract_html(GAP, [{
-                'name': 'title', 'kind': 'xpath', 'selector': '/html/body', 'scope': 'record', 'many': False,
-            }], record=RECORD)
+            extract_html(GAP, RULES, record={'kind': 'xpath', 'selector': 'string(//b)'})
+
+    def test_utf16_bom_is_decoded(self):
+        body = '<h1>Café</h1>'.encode('utf-16')
+        rows = extract_html(body, [{
+            'name': 'title', 'kind': 'xpath', 'selector': '//h1', 'scope': 'page', 'many': False,
+        }])
+        self.assertEqual(rows[0]['values']['title']['normalized'], 'Café')
 
 
 class JournalTests(SimpleTestCase):
@@ -85,6 +107,18 @@ class FetchLimitTests(SimpleTestCase):
         with self.assertRaises(FetchError) as caught:
             _unwrap_content(packed, 'deflate', 100)
         self.assertEqual(caught.exception.code, 'too_large')
+
+    def test_truncated_deflate_and_gzip_are_rejected(self):
+        import gzip
+        raw = b'<html>hello</html>'
+        packed = zlib.compress(raw)
+        with self.assertRaises(FetchError) as deflate_error:
+            _unwrap_content(packed[:-5], 'deflate', 20000)
+        self.assertEqual(deflate_error.exception.code, 'bad_encoding')
+        gz = gzip.compress(raw)
+        with self.assertRaises(FetchError) as gzip_error:
+            _unwrap_content(gz[:-5], 'gzip', 20000)
+        self.assertEqual(gzip_error.exception.code, 'bad_encoding')
 
 
 class SnapshotStoreTests(SimpleTestCase):
@@ -116,3 +150,24 @@ class FetchKeyTests(TestCase):
         self.assertLess(len(task.idempotency_key), 80)
         self.assertEqual(task.payload['url'], url)
         self.assertNotIn(url, task.idempotency_key)
+
+    def test_revise_saves_the_title(self):
+        from django.contrib.auth import get_user_model
+        from modules.scout.api.services.runs import revise_job
+
+        user = get_user_model().objects.create_superuser(
+            username='scout-title',
+            email='scout-title@example.com',
+            password='test-pass-123',
+        )
+        url = 'https://example.com/item'
+        fields = [{'name': 'title', 'kind': 'css', 'selector': 'h1', 'scope': 'page', 'many': False}]
+        job = create_job(
+            user_public_id=user.public_id,
+            title='Старое',
+            seed_urls=[url],
+            fields=fields,
+        )
+        revise_job(job=job, seed_urls=[url], fields=fields, title='Новое')
+        job.refresh_from_db()
+        self.assertEqual(job.title, 'Новое')

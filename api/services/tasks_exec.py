@@ -19,6 +19,7 @@ from .constants import (
     RUN_COMPLETED,
     RUN_COMPLETED_WITH_ERRORS,
     RUN_FAILED,
+    RUN_RUNNING,
     TASK_CANCELLED,
     TASK_EXTRACT,
     TASK_FAILED,
@@ -32,7 +33,7 @@ from .errors import FetchError, ScoutError
 from .html_extract import extract_html
 from .http_fetch import fetch_html
 from .journal import append_event, describe_extract
-from .runs import advance_run
+from .runs import advance_run, _finish_if_idle
 from .snapshot_store import read_snapshot_bytes, store_snapshot_bytes
 
 logger = logging.getLogger('celery.module.scout.tasks')
@@ -57,6 +58,7 @@ def schedule_publish(run_public_id) -> None:
 
 def publish_ready(run_public_id=None) -> None:
     recover_expired_leases()
+    _settle_idle_runs(run_public_id)
     if inline_runner():
         for _ in range(40):
             batch = list(_ready(run_public_id)[:20])
@@ -79,6 +81,17 @@ def publish_ready(run_public_id=None) -> None:
             logger.exception('SCOUT не опубликовал задачу %s', task.public_id)
             continue
         Task.objects.filter(pk=task.pk).update(published_at=now)
+
+
+def _settle_idle_runs(run_public_id=None) -> None:
+    queryset = Run.objects.filter(status=RUN_RUNNING)
+    if run_public_id:
+        queryset = queryset.filter(public_id=run_public_id)
+    for run_id in list(queryset.values_list('pk', flat=True)):
+        with transaction.atomic():
+            locked = Run.objects.select_for_update().get(pk=run_id)
+            if locked.status == RUN_RUNNING:
+                _finish_if_idle(locked)
 
 
 def recover_expired_leases() -> int:
@@ -163,8 +176,16 @@ def _ready(run_public_id):
 
 def _claim(task_public_id: str, fencing_token: int):
     with transaction.atomic():
+        run_id = (
+            Task.objects.filter(public_id=task_public_id)
+            .values_list('run_id', flat=True)
+            .first()
+        )
+        if run_id is None:
+            return None
+        run = Run.objects.select_for_update().get(pk=run_id)
         try:
-            task = Task.objects.select_for_update().select_related('run').get(public_id=task_public_id)
+            task = Task.objects.select_for_update().get(public_id=task_public_id)
         except Task.DoesNotExist:
             return None
         if task.fencing_token != fencing_token:
@@ -173,7 +194,7 @@ def _claim(task_public_id: str, fencing_token: int):
             return None
         if task.status == TASK_RETRY_WAIT and task.next_retry_at and task.next_retry_at > timezone.now():
             return None
-        if task.run.status not in CLAIMABLE_RUN_STATUSES:
+        if run.status not in CLAIMABLE_RUN_STATUSES:
             return None
         task.fencing_token += 1
         task.status = TASK_LEASED
@@ -273,6 +294,7 @@ def _extract(task: Task, token: int) -> None:
 
 def _finish(task: Task, token: int, write) -> None:
     with transaction.atomic():
+        Run.objects.select_for_update().get(pk=task.run_id)
         locked = Task.objects.select_for_update().get(pk=task.pk)
         if locked.fencing_token != token or locked.status != TASK_LEASED:
             return
@@ -292,6 +314,7 @@ def _finish(task: Task, token: int, write) -> None:
 def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -> None:
     text = (message or '')[:400]
     with transaction.atomic():
+        run = Run.objects.select_for_update().get(pk=task.run_id)
         locked = Task.objects.select_for_update().get(pk=task.pk)
         if locked.fencing_token != token or locked.status != TASK_LEASED:
             return
@@ -304,7 +327,7 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
             locked.published_at = None
             locked.lease_until = None
             if not inline_runner():
-                _schedule_retry(locked.run.public_id, delay)
+                _schedule_retry(run.public_id, delay)
         else:
             locked.status = TASK_FAILED
             locked.lease_until = None

@@ -81,6 +81,7 @@ class JobDetailView(BaseAPIView):
                 seed_urls=request.data.get('seed_urls') or [],
                 fields=request.data.get('fields') or [],
                 record=request.data.get('record'),
+                title=request.data.get('title'),
             )
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))

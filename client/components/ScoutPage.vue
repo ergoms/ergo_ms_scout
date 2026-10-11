@@ -221,6 +221,7 @@ async function explore() {
 
 async function act(endpoint, label) {
   if (!query.value.run || loading.value) return
+  if (dirty.value && endpoint !== scoutEndpoints.resume) return
   const runId = query.value.run
   loading.value = true
   try {
@@ -388,10 +389,10 @@ function flattenValues(values, id) {
       </ul>
     </section>
     <div class="d-flex flex-wrap gap-2 mb-3">
-      <button type="button" class="btn btn-primary" :disabled="loading || run?.status !== 'awaiting_confirmation'" @click="act(scoutEndpoints.approve, t('scout.approve'))">
+      <button type="button" class="btn btn-primary" :disabled="loading || dirty || run?.status !== 'awaiting_confirmation'" @click="act(scoutEndpoints.approve, t('scout.approve'))">
         {{ t('scout.approve') }}
       </button>
-      <button type="button" class="btn btn-primary" :disabled="loading || run?.status !== 'awaiting_confirmation' || !run?.approved" @click="act(scoutEndpoints.start, t('scout.start'))">
+      <button type="button" class="btn btn-primary" :disabled="loading || dirty || run?.status !== 'awaiting_confirmation' || !run?.approved" @click="act(scoutEndpoints.start, t('scout.start'))">
         {{ t('scout.start') }}
       </button>
       <button type="button" class="btn btn-outline-secondary" :disabled="loading || run?.status !== 'running'" @click="act(scoutEndpoints.pause, t('scout.pause'))">
