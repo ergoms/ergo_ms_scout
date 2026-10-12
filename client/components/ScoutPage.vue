@@ -43,6 +43,7 @@ const returnToSetup = ref(false)
 let pollTimer = 0
 let loadToken = 0
 let shownRun = ''
+let editorGeneration = 0
 
 const kindOptions = computed(() => [
   { id: 'css', name: t('scout.fields.css') },
@@ -77,7 +78,11 @@ const sourceRows = computed(() => {
   return Array.isArray(run.value?.preview) ? run.value.preview : []
 })
 
-const shownRows = computed(() => sourceRows.value.slice(0, PREVIEW_LIMIT))
+const shownRows = computed(() => {
+  if (stage.value === 'preview') return sourceRows.value.slice(0, PREVIEW_LIMIT)
+  if (stage.value === 'collect') return sourceRows.value.slice(-PREVIEW_LIMIT)
+  return sourceRows.value
+})
 const tableRows = computed(() => shownRows.value.map((row, index) => flattenValues(row.values, row.public_id || index)))
 const columns = computed(() => {
   const keys = []
@@ -95,16 +100,28 @@ const gapCount = computed(() => tableRows.value.reduce((sum, row) => (
 
 const pageProgress = computed(() => {
   const tasks = Array.isArray(run.value?.tasks) ? run.value.tasks : []
-  const pages = tasks.filter((task) => task.kind === 'fetch')
-  const done = pages.filter((task) => task.status === 'succeeded').length
-  const errors = tasks.filter((task) => task.status === 'failed').length
-  return { done, total: pages.length, records: run.value?.record_count || 0, errors }
+  const fetches = tasks.filter((task) => task.kind === 'fetch')
+  const extracts = tasks.filter((task) => task.kind === 'extract')
+  return {
+    fetched: fetches.filter((task) => task.status === 'succeeded').length,
+    fetchTotal: fetches.length,
+    extracted: extracts.filter((task) => task.status === 'succeeded').length,
+    extractTotal: extracts.length,
+    records: run.value?.record_count || 0,
+    errors: tasks.filter((task) => task.status === 'failed').length,
+  }
 })
 
 const journal = computed(() => (Array.isArray(run.value?.journal) ? run.value.journal : []))
 const events = computed(() => (Array.isArray(run.value?.events) ? run.value.events : []))
 const evidenceLines = computed(() => shownRows.value.flatMap((row, index) => (
-  (row.evidence || []).map((item) => `${index + 1}. ${item.field_path}: ${item.normalized_value || item.raw_value || t('scout.flow.notFound')}`)
+  (row.evidence || []).map((item) => {
+    const value = item.normalized_value || item.raw_value || t('scout.flow.notFound')
+    const place = [item.source_url, item.locator].filter(Boolean).join(' · ')
+    return place
+      ? `${index + 1}. ${item.field_path}: ${value} — ${place}`
+      : `${index + 1}. ${item.field_path}: ${value}`
+  })
 )))
 
 watch(() => query.value.job, (publicId) => {
@@ -239,6 +256,7 @@ async function loadJob(publicId) {
 
 async function checkPage() {
   if (loading.value || !formValid()) return
+  const generation = ++editorGeneration
   loading.value = true
   try {
     const body = payload()
@@ -246,6 +264,7 @@ async function checkPage() {
     const saved = existing
       ? await apiClient.patch(scoutEndpoints.job(existing), body)
       : await apiClient.post(scoutEndpoints.jobs, body)
+    if (generation !== editorGeneration) return
     if (!saved.success) {
       showError(saved.message || t('scout.flow.checkFailed'))
       return
@@ -254,6 +273,7 @@ async function checkPage() {
     savedStamp.value = stamp()
     patchState({ job: saved.data.public_id, run: '' })
     const explored = await apiClient.post(scoutEndpoints.explore(saved.data.public_id), {})
+    if (generation !== editorGeneration) return
     if (!explored.success) {
       showError(explored.message || t('scout.flow.checkFailed'))
       return
@@ -264,14 +284,16 @@ async function checkPage() {
     patchState({ run: explored.data.public_id })
     schedulePoll()
   } catch (error) {
+    if (generation !== editorGeneration) return
     logError('SCOUT: не удалось проверить страницу', error)
     await handleApiError(error, t('scout.flow.checkPage'))
   } finally {
-    loading.value = false
+    if (generation === editorGeneration) loading.value = false
   }
 }
 
 function newJob() {
+  editorGeneration += 1
   title.value = ''
   url.value = ''
   recordMode.value = 'page'
@@ -324,6 +346,7 @@ async function act(endpoint, label) {
   try {
     const response = await apiClient.post(endpoint(runId), {})
     if (!response.success) {
+      returnToSetup.value = false
       showError(response.message || label)
       return
     }
@@ -334,6 +357,7 @@ async function act(endpoint, label) {
     if (response.data.record_count) await loadRecords(runId, loadToken)
     else records.value = []
   } catch (error) {
+    returnToSetup.value = false
     logError('SCOUT: действие со сбором не выполнено', error)
     await handleApiError(error, label)
   } finally {
@@ -414,7 +438,7 @@ function schedulePoll() {
   <div class="scout-page container py-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h1 class="h3 mb-0">{{ t('scout.title') }}</h1>
-      <button type="button" class="btn btn-outline-secondary btn-sm" @click="newJob">{{ t('scout.newJob') }}</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" :disabled="loading" @click="newJob">{{ t('scout.newJob') }}</button>
     </div>
     <ol class="d-flex flex-wrap gap-3 list-unstyled mb-4">
       <li
@@ -489,7 +513,13 @@ function schedulePoll() {
 
     <section v-else-if="stage === 'preview'" class="mb-4">
       <h2 class="h5">{{ run?.status === 'exploring' || returnToSetup ? t('scout.flow.preparing') : t('scout.flow.previewReady') }}</h2>
-      <p v-if="run?.status === 'exploring' || returnToSetup">{{ returnToSetup ? t('scout.flow.cancellingLead') : t('scout.flow.preparingLead') }}</p>
+      <p v-if="run?.status === 'exploring' || returnToSetup" class="d-flex align-items-center gap-2">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        {{ returnToSetup ? t('scout.flow.cancellingLead') : t('scout.flow.preparingLead') }}
+      </p>
+      <div v-if="run?.status === 'exploring' || returnToSetup" class="border rounded p-4 text-center text-muted">
+        {{ t('scout.flow.preparing') }}
+      </div>
       <template v-else>
         <p v-if="confirmedNotStarted">{{ t('scout.flow.startHeld') }}</p>
         <p>{{ t('scout.flow.planLead', { url, fields: fields.map((field) => field.name).filter(Boolean).join(', ') }) }}</p>
@@ -553,11 +583,14 @@ function schedulePoll() {
       <p v-if="run?.status === 'pausing'">{{ t('scout.flow.pausingLead') }}</p>
       <p v-else-if="run?.status === 'cancelling'">{{ t('scout.flow.cancellingLead') }}</p>
       <p v-else-if="run?.status === 'paused'">{{ t('scout.flow.pausedLead') }}</p>
-      <p v-if="pageProgress.total">
-        {{ t('scout.flow.progress', pageProgress) }}
+      <p v-if="pageProgress.fetchTotal || pageProgress.extractTotal">
+        <span v-if="pageProgress.fetchTotal">{{ t('scout.flow.loaded', pageProgress) }}</span>
+        <template v-if="pageProgress.extractTotal"> · {{ t('scout.flow.extracted', pageProgress) }}</template>
+        · {{ t('scout.flow.gotRecords', { records: pageProgress.records }) }}
         <template v-if="pageProgress.errors"> · {{ t('scout.flow.progressErrors', { count: pageProgress.errors }) }}</template>
       </p>
       <p class="text-muted">{{ url }}</p>
+      <p v-if="sourceRows.length > shownRows.length">{{ t('scout.flow.recent', { shown: shownRows.length, total: sourceRows.length }) }}</p>
       <p v-if="!records.length">{{ t('scout.flow.waitingRows') }}</p>
       <DataTable
         v-else
@@ -590,7 +623,12 @@ function schedulePoll() {
         {{ run?.status === 'completed_with_errors' ? t('scout.flow.finishedErrors') : run?.status === 'failed' ? t('scout.flow.failedLead') : run?.status === 'cancelled' ? t('scout.flow.cancelledLead') : t('scout.flow.finished') }}
       </h2>
       <p v-if="run?.error_summary">{{ run.error_summary }}</p>
-      <p v-if="pageProgress.total">{{ t('scout.flow.progress', pageProgress) }}</p>
+      <p v-if="pageProgress.fetchTotal || pageProgress.extractTotal">
+        <span v-if="pageProgress.fetchTotal">{{ t('scout.flow.loaded', pageProgress) }}</span>
+        <template v-if="pageProgress.extractTotal"> · {{ t('scout.flow.extracted', pageProgress) }}</template>
+        · {{ t('scout.flow.gotRecords', { records: pageProgress.records }) }}
+        <template v-if="pageProgress.errors"> · {{ t('scout.flow.progressErrors', { count: pageProgress.errors }) }}</template>
+      </p>
       <p v-if="!records.length">{{ t('scout.flow.resultEmpty') }}</p>
       <DataTable
         v-else
