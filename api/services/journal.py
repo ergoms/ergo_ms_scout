@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from ..models import Run
-from .constants import RUN_AWAITING, RUN_RUNNING
+from .constants import RUN_AWAITING, RUN_EXPLORING, RUN_RUNNING
 from .html_extract import decode_html, selector_match_count
 from .snapshot_store import read_snapshot_bytes
 
@@ -31,7 +31,12 @@ def append_event(run_id, message: str) -> None:
 def journal_lines(run: Run) -> list[str]:
     if run.snapshots.exists():
         return _diagnose(run)
-    return stored_messages(run) or ['Записей журнала пока нет.']
+    stored = stored_messages(run)
+    if stored:
+        return stored
+    if run.status == RUN_EXPLORING:
+        return ['Проверяем страницу.']
+    return ['Записей журнала пока нет.']
 
 
 def stored_messages(run: Run) -> list[str]:

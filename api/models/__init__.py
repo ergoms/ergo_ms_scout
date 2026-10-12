@@ -117,7 +117,7 @@ class PageSnapshot(PublicIdMixin, models.Model):
     content_path = models.CharField(max_length=300)
     byte_size = models.PositiveIntegerField(default=0)
     content_type = models.CharField(max_length=120, blank=True, default='')
-    charset = models.CharField(max_length=40, blank=True, default='')
+    charset = models.CharField(max_length=40, blank=True, default='', db_default='')
     fetched_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

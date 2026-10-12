@@ -338,7 +338,9 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
             error_message=text,
             finished_at=timezone.now(),
         )
-        if locked.status == TASK_FAILED:
+        if locked.status == TASK_RETRY_WAIT:
+            append_event(locked.run_id, 'Страница пока не записана, повторяем.')
+        elif locked.status == TASK_FAILED:
             append_event(locked.run_id, f'Шаг {locked.kind} не выполнен: {text}')
         advance_run(locked.run)
 
