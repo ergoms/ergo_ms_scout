@@ -21,6 +21,7 @@ from .constants import (
     RUN_FAILED,
     RUN_RUNNING,
     TASK_CANCELLED,
+    TASK_CRAWL,
     TASK_EXTRACT,
     TASK_FAILED,
     TASK_FETCH,
@@ -144,6 +145,8 @@ def run_one(task_public_id: str, fencing_token: int) -> bool:
     try:
         if task.kind == TASK_FETCH:
             _fetch(task, token)
+        elif task.kind == TASK_CRAWL:
+            _crawl(task, token)
         elif task.kind == TASK_EXTRACT:
             _extract(task, token)
         else:
@@ -196,6 +199,15 @@ def _claim(task_public_id: str, fencing_token: int):
             return None
         if run.status not in CLAIMABLE_RUN_STATUSES:
             return None
+        if task.kind == TASK_FETCH:
+            limit = int((run.job_revision.crawl or {}).get('parallel_fetch') or 2)
+            busy = Task.objects.filter(
+                run_id=run.pk,
+                kind=TASK_FETCH,
+                status=TASK_LEASED,
+            ).exclude(pk=task.pk).count()
+            if busy >= limit:
+                return None
         task.fencing_token += 1
         task.status = TASK_LEASED
         task.attempt_count += 1
@@ -215,7 +227,7 @@ def _fetch(task: Task, token: int) -> None:
     digest, relative = store_snapshot_bytes(result['body'])
 
     def write():
-        PageSnapshot.objects.get_or_create(
+        snapshot, _created = PageSnapshot.objects.get_or_create(
             run=task.run,
             source_url=task.payload['url'],
             content_hash=digest,
@@ -232,6 +244,9 @@ def _fetch(task: Task, token: int) -> None:
             task.run_id,
             f'Страница скачана: HTTP {result["status"]}, {len(result["body"])} байт.',
         )
+        from .frontier import note_fetch
+        fresh = Run.objects.get(pk=task.run_id)
+        note_fetch(fresh, snapshot)
 
     _finish(task, token, write)
 
@@ -292,6 +307,21 @@ def _extract(task: Task, token: int) -> None:
     _finish(task, token, write)
 
 
+def _crawl(task: Task, token: int) -> None:
+    snapshot = PageSnapshot.objects.get(
+        public_id=task.payload['snapshot_public_id'],
+        run=task.run,
+    )
+    body = read_snapshot_bytes(snapshot.content_path)
+
+    def write():
+        from .frontier import discover
+        fresh = Run.objects.get(pk=task.run_id)
+        discover(fresh, snapshot, body)
+
+    _finish(task, token, write)
+
+
 def _finish(task: Task, token: int, write) -> None:
     with transaction.atomic():
         Run.objects.select_for_update().get(pk=task.run_id)
@@ -342,6 +372,9 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
             append_event(locked.run_id, 'Страница пока не записана, повторяем.')
         elif locked.status == TASK_FAILED:
             append_event(locked.run_id, f'Шаг {locked.kind} не выполнен: {text}')
+            if locked.kind == TASK_FETCH:
+                from .frontier import mark_failed
+                mark_failed(run, (locked.payload or {}).get('url') or '')
         advance_run(locked.run)
 
 

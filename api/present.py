@@ -1,5 +1,6 @@
 """Ответы API без числовых id базы."""
 
+from .models import CrawlURL
 from .services.journal import journal_lines, stored_messages
 
 
@@ -21,6 +22,7 @@ def revision_payload(revision) -> dict:
         'record': revision.record or None,
         'fields': revision.fields,
         'limits': revision.limits,
+        'crawl': revision.crawl or {'mode': 'pages'},
         'plan_hash': revision.plan_hash,
         'approved': approved,
     }
@@ -37,6 +39,8 @@ def run_payload(run, *, preview=None) -> dict:
         and run.job_revision.approved_plan_hash == run.job_revision.plan_hash,
         'snapshot_count': run.snapshots.count(),
         'record_count': run.records.count(),
+        'stop_reason': run.stop_reason,
+        'frontier': _frontier_counts(run),
         'journal': journal_lines(run),
         'events': stored_messages(run),
         'tasks': [
@@ -53,6 +57,14 @@ def run_payload(run, *, preview=None) -> dict:
     if preview is not None:
         data['preview'] = preview
     return data
+
+
+def _frontier_counts(run) -> dict:
+    counts = {'queued': 0, 'active': 0, 'done': 0, 'skipped': 0, 'failed': 0}
+    for state in CrawlURL.objects.filter(run=run).values_list('state', flat=True):
+        if state in counts:
+            counts[state] += 1
+    return counts
 
 
 def record_payload(record) -> dict:

@@ -5,7 +5,14 @@ EXTRACTOR_VERSION = '2'
 PROTOCOL_VERSION = 1
 
 TASK_FETCH = 'fetch'
+TASK_CRAWL = 'crawl'
 TASK_EXTRACT = 'extract'
+
+CRAWL_QUEUED = 'queued'
+CRAWL_ACTIVE = 'active'
+CRAWL_DONE = 'done'
+CRAWL_SKIPPED = 'skipped'
+CRAWL_FAILED = 'failed'
 
 TASK_PENDING = 'pending'
 TASK_LEASED = 'leased'
@@ -50,6 +57,27 @@ DEFAULT_LIMITS = {
     'max_bytes': 1_000_000,
     'timeout_seconds': 20,
 }
+
+CRAWL_LIMITS = {
+    'max_depth': 2,
+    'max_pages': 50,
+    'preview_pages': 3,
+    'max_seconds': 600,
+    'frontier_cap': 200,
+    'fetch_delay_ms': 0,
+    'parallel_fetch': 2,
+    'max_total_bytes': 20_000_000,
+}
+
+DROP_QUERY = (
+    'utm_source',
+    'utm_medium',
+    'utm_campaign',
+    'utm_term',
+    'utm_content',
+    'gclid',
+    'fbclid',
+)
 
 MAX_ATTEMPTS = 3
 LEASE_SECONDS = 120

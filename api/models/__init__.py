@@ -25,6 +25,7 @@ class JobRevision(PublicIdMixin, models.Model):
     fields = models.JSONField(default=list)
     record = models.JSONField(default=dict, blank=True)
     limits = models.JSONField(default=dict)
+    crawl = models.JSONField(default=dict, blank=True)
     plan_hash = models.CharField(max_length=64)
     approved_plan_hash = models.CharField(max_length=64, blank=True, default='')
     approved_at = models.DateTimeField(null=True, blank=True)
@@ -65,6 +66,7 @@ class Run(PublicIdMixin, models.Model):
     user_public_id = models.UUIDField(db_index=True)
     status = models.CharField(max_length=32, db_index=True)
     error_summary = models.TextField(blank=True, default='')
+    stop_reason = models.CharField(max_length=32, blank=True, default='')
     events = models.JSONField(default=list)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
@@ -166,6 +168,39 @@ class Evidence(PublicIdMixin, models.Model):
     extractor_id = models.CharField(max_length=80)
     extractor_version = models.CharField(max_length=32)
     extracted_at = models.DateTimeField(auto_now_add=True)
+
+
+class CrawlURL(PublicIdMixin, models.Model):
+    run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name='crawl_urls')
+    original_url = models.TextField()
+    normalized_url = models.TextField(blank=True, default='')
+    url_key = models.CharField(max_length=64)
+    depth = models.PositiveIntegerField(default=0)
+    parent = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='children',
+    )
+    state = models.CharField(max_length=16, db_index=True)
+    skip_reason = models.CharField(max_length=80, blank=True, default='')
+    snapshot = models.ForeignKey(
+        PageSnapshot,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='crawl_urls',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['run', 'url_key'],
+                name='scout_crawl_url_key',
+            ),
+        ]
 
 
 class ExportArtifact(PublicIdMixin, models.Model):

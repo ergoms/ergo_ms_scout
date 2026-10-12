@@ -30,6 +30,12 @@ const url = ref('')
 const recordMode = ref('page')
 const recordKind = ref('css')
 const recordSelector = ref('')
+const crawlMode = ref('pages')
+const allowedHosts = ref('')
+const visitPrefix = ref('')
+const extractPrefix = ref('')
+const crawlDepth = ref(2)
+const crawlPages = ref(50)
 const fields = ref([blankField()])
 const run = ref(null)
 const records = ref([])
@@ -152,6 +158,7 @@ function payload() {
     title: title.value,
     seed_urls: [url.value],
     record: cards && selector ? { kind: recordKind.value, selector } : null,
+    crawl: crawlPayload(),
     fields: fields.value.map((field) => ({
       name: field.name.trim(),
       kind: field.kind,
@@ -159,6 +166,18 @@ function payload() {
       scope: cards && field.scope === 'record' ? 'record' : 'page',
       many: field.many,
     })),
+  }
+}
+
+function crawlPayload() {
+  const rules = (prefix) => (prefix.trim() ? [{ kind: 'prefix', pattern: prefix.trim() }] : [])
+  return {
+    mode: crawlMode.value === 'site' ? 'site' : 'pages',
+    allowed_hosts: allowedHosts.value.split(',').map((item) => item.trim()).filter(Boolean),
+    visit: rules(visitPrefix.value),
+    extract_on: rules(extractPrefix.value),
+    max_depth: Number(crawlDepth.value) || 2,
+    max_pages: Number(crawlPages.value) || 50,
   }
 }
 
@@ -174,6 +193,13 @@ function applyJob(job) {
   recordMode.value = savedRecord?.selector ? 'cards' : 'page'
   recordKind.value = savedRecord?.kind === 'xpath' ? 'xpath' : 'css'
   recordSelector.value = savedRecord?.selector || ''
+  const savedCrawl = revision?.crawl || {}
+  crawlMode.value = savedCrawl.mode === 'site' ? 'site' : 'pages'
+  allowedHosts.value = Array.isArray(savedCrawl.allowed_hosts) ? savedCrawl.allowed_hosts.join(', ') : ''
+  visitPrefix.value = savedCrawl.visit?.[0]?.pattern || ''
+  extractPrefix.value = savedCrawl.extract_on?.[0]?.pattern || ''
+  crawlDepth.value = savedCrawl.max_depth || 2
+  crawlPages.value = savedCrawl.max_pages || 50
   const savedFields = Array.isArray(revision?.fields) ? revision.fields : []
   if (!savedFields.length) return
   fields.value = savedFields.map((field) => ({
@@ -299,6 +325,12 @@ function newJob() {
   recordMode.value = 'page'
   recordKind.value = 'css'
   recordSelector.value = ''
+  crawlMode.value = 'pages'
+  allowedHosts.value = ''
+  visitPrefix.value = ''
+  extractPrefix.value = ''
+  crawlDepth.value = 2
+  crawlPages.value = 50
   fields.value = [blankField()]
   fieldErrors.value = ['']
   urlError.value = ''
@@ -491,6 +523,27 @@ function schedulePoll() {
             <div v-if="cardError" class="text-danger small mt-1">{{ cardError }}</div>
           </FormField>
         </template>
+        <div class="d-flex flex-wrap gap-3 py-2">
+          <label><input v-model="crawlMode" type="radio" value="pages"> {{ t('scout.flow.pagesOnly') }}</label>
+          <label><input v-model="crawlMode" type="radio" value="site"> {{ t('scout.flow.crawlSite') }}</label>
+        </div>
+        <template v-if="crawlMode === 'site'">
+          <FormField :label="t('scout.flow.allowedHosts')" label-for="scout-hosts">
+            <input id="scout-hosts" v-model="allowedHosts" class="form-control" type="text">
+          </FormField>
+          <FormField :label="t('scout.flow.visitPrefix')" label-for="scout-visit">
+            <input id="scout-visit" v-model="visitPrefix" class="form-control" type="text" placeholder="/catalog">
+          </FormField>
+          <FormField :label="t('scout.flow.extractPrefix')" label-for="scout-extract">
+            <input id="scout-extract" v-model="extractPrefix" class="form-control" type="text" placeholder="/item">
+          </FormField>
+          <FormField :label="t('scout.flow.depth')" label-for="scout-depth">
+            <input id="scout-depth" v-model="crawlDepth" class="form-control" type="number" min="0" max="5">
+          </FormField>
+          <FormField :label="t('scout.flow.crawlPages')" label-for="scout-pages">
+            <input id="scout-pages" v-model="crawlPages" class="form-control" type="number" min="1" max="200">
+          </FormField>
+        </template>
         <div v-for="(field, index) in fields" :key="`rule-${index}`" class="border-top pt-2">
           <FormField :label="`${field.name || t('scout.fieldName')}: ${t('scout.fieldKind')}`">
             <SelectBox v-model="field.kind" :options="kindOptions" value-key="id" label-key="name" :include-all-option="false" />
@@ -589,7 +642,10 @@ function schedulePoll() {
         · {{ t('scout.flow.gotRecords', { records: pageProgress.records }) }}
         <template v-if="pageProgress.errors"> · {{ t('scout.flow.progressErrors', { count: pageProgress.errors }) }}</template>
       </p>
-      <p class="text-muted">{{ url }}</p>
+      <p v-if="run?.frontier && crawlMode === 'site'">
+        {{ t('scout.flow.frontierLine', run.frontier) }}
+        <template v-if="run.stop_reason"> · {{ run.stop_reason }}</template>
+      </p>
       <p v-if="sourceRows.length > shownRows.length">{{ t('scout.flow.recent', { shown: shownRows.length, total: sourceRows.length }) }}</p>
       <p v-if="!records.length">{{ t('scout.flow.waitingRows') }}</p>
       <DataTable

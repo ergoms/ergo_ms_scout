@@ -40,8 +40,8 @@ from .errors import ScoutError
 from .plan import normalize_plan, plan_hash
 
 
-def create_job(*, user_public_id, title: str, seed_urls, fields, record=None) -> Job:
-    plan = normalize_plan(seed_urls, fields, record=record)
+def create_job(*, user_public_id, title: str, seed_urls, fields, record=None, crawl=None) -> Job:
+    plan = normalize_plan(seed_urls, fields, record=record, crawl=crawl)
     clean_title = _clean_title(title)
     with transaction.atomic():
         job = Job.objects.create(user_public_id=user_public_id, title=clean_title)
@@ -49,8 +49,8 @@ def create_job(*, user_public_id, title: str, seed_urls, fields, record=None) ->
     return job
 
 
-def revise_job(*, job: Job, seed_urls, fields, record=None, title=None) -> JobRevision:
-    plan = normalize_plan(seed_urls, fields, record=record)
+def revise_job(*, job: Job, seed_urls, fields, record=None, title=None, crawl=None) -> JobRevision:
+    plan = normalize_plan(seed_urls, fields, record=record, crawl=crawl)
     with transaction.atomic():
         locked_job = Job.objects.select_for_update().get(pk=job.pk)
         if Run.objects.filter(job_revision__job=locked_job, status__in=OCCUPYING_STATUSES).exists():
@@ -78,7 +78,10 @@ def explore_job(*, job: Job, user_public_id) -> Run:
             status=RUN_EXPLORING,
             started_at=timezone.now(),
         )
-        for url in revision.seed_urls:
+        urls = list(revision.seed_urls)
+        if (revision.crawl or {}).get('mode') == 'site':
+            urls = urls[:int((revision.crawl or {}).get('preview_pages') or 3)]
+        for url in urls:
             Task.objects.create(
                 run=run,
                 kind=TASK_FETCH,
@@ -115,7 +118,11 @@ def start_run(*, run: Run) -> Run:
             raise ScoutError('approval_required', _('Сбор без подтверждения этого плана запрещён'))
         locked.status = RUN_RUNNING
         locked.save(update_fields=['status'])
-        _ensure_extract_tasks(locked)
+        if (locked.job_revision.crawl or {}).get('mode') == 'site':
+            from .frontier import open_site
+            open_site(locked)
+        else:
+            _ensure_extract_tasks(locked)
         _finish_if_idle(locked)
     return Run.objects.get(pk=run.pk)
 
@@ -141,6 +148,8 @@ def resume_run(*, run: Run) -> Run:
             raise ScoutError('approval_required', _('Сбор без подтверждения этого плана запрещён'))
         locked.status = RUN_RUNNING
         locked.save(update_fields=['status'])
+        from .frontier import release_queued
+        release_queued(locked)
         _finish_if_idle(locked)
     return Run.objects.get(pk=run.pk)
 
@@ -195,7 +204,10 @@ def advance_run(run: Run) -> None:
 
 
 def _finish_if_idle(locked: Run) -> None:
+    from .frontier import blocks_completion
     if locked.tasks.filter(status__in=OPEN_TASK_STATUSES).exists():
+        return
+    if blocks_completion(locked):
         return
     failed = locked.tasks.filter(status=TASK_FAILED).exists()
     locked.status = RUN_COMPLETED_WITH_ERRORS if failed else RUN_COMPLETED
@@ -240,6 +252,7 @@ def _create_revision(job: Job, number: int, plan: dict) -> JobRevision:
         fields=plan['fields'],
         record=plan['record'] or {},
         limits=plan['limits'],
+        crawl=plan['crawl'],
         plan_hash=digest,
     )
     schema_fields = [{'name': item['name']} for item in plan['fields']]

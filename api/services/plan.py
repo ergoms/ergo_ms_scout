@@ -4,16 +4,18 @@ import hashlib
 import json
 import re
 
+from urllib.parse import urlparse
+
 from django.utils.translation import gettext as _
 
-from .constants import DEFAULT_LIMITS
+from .constants import CRAWL_LIMITS, DEFAULT_LIMITS, DROP_QUERY
 from .errors import ScoutError
 
 _NAME = re.compile(r'^[a-z][a-z0-9_]{0,40}$')
 _KINDS = {'css', 'xpath'}
 
 
-def normalize_plan(seed_urls, fields, limits=None, record=None) -> dict:
+def normalize_plan(seed_urls, fields, limits=None, record=None, crawl=None) -> dict:
     urls = []
     seen = set()
     for raw in seed_urls or []:
@@ -81,7 +83,66 @@ def normalize_plan(seed_urls, fields, limits=None, record=None) -> dict:
         'record': clean_record,
         'fields': clean_fields,
         'limits': merged_limits,
+        'crawl': _clean_crawl(crawl, urls),
     }
+
+
+def _clean_crawl(crawl, seed_urls) -> dict:
+    raw = crawl if isinstance(crawl, dict) else {}
+    mode = str(raw.get('mode') or 'pages')
+    if mode not in ('pages', 'site'):
+        raise ScoutError('invalid', _('Режим обхода: pages или site'))
+    hosts = []
+    for item in raw.get('allowed_hosts') or []:
+        host = str(item or '').strip().lower()
+        if host and host not in hosts:
+            hosts.append(host)
+    if mode == 'site' and not hosts:
+        hosts = sorted({
+            (urlparse(url).hostname or '').lower()
+            for url in seed_urls
+            if urlparse(url).hostname
+        })
+    return {
+        'mode': mode,
+        'allowed_hosts': hosts,
+        'visit': _clean_rules(raw.get('visit')),
+        'extract_on': _clean_rules(raw.get('extract_on')),
+        'max_depth': _clamp(raw.get('max_depth'), 0, 5, CRAWL_LIMITS['max_depth']),
+        'max_pages': _clamp(raw.get('max_pages'), 1, 200, CRAWL_LIMITS['max_pages']),
+        'preview_pages': _clamp(raw.get('preview_pages'), 1, 5, CRAWL_LIMITS['preview_pages']),
+        'max_seconds': _clamp(raw.get('max_seconds'), 1, 3600, CRAWL_LIMITS['max_seconds']),
+        'frontier_cap': _clamp(raw.get('frontier_cap'), 1, 500, CRAWL_LIMITS['frontier_cap']),
+        'fetch_delay_ms': _clamp(raw.get('fetch_delay_ms'), 0, 5000, CRAWL_LIMITS['fetch_delay_ms']),
+        'parallel_fetch': _clamp(raw.get('parallel_fetch'), 1, 4, CRAWL_LIMITS['parallel_fetch']),
+        'max_total_bytes': _clamp(
+            raw.get('max_total_bytes'), 1, 50_000_000, CRAWL_LIMITS['max_total_bytes'],
+        ),
+        'drop_query': list(DROP_QUERY),
+    }
+
+
+def _clean_rules(rules) -> list:
+    cleaned = []
+    for item in rules or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get('kind') or '')
+        pattern = str(item.get('pattern') or '').strip()
+        if kind not in ('prefix', 'contains') or not pattern or len(pattern) > 300:
+            raise ScoutError('invalid', _('Правило адреса задано неверно'))
+        cleaned.append({'kind': kind, 'pattern': pattern})
+    return cleaned
+
+
+def _clamp(value, low, high, fallback) -> int:
+    if value is None or value == '':
+        return fallback
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ScoutError('invalid', _('Лимит обхода задан неверно')) from exc
+    return max(low, min(number, high))
 
 
 def _clean_record(record) -> dict | None:

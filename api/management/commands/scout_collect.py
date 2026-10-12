@@ -15,6 +15,12 @@ class Command(BaseCommand):
         parser.add_argument('--url', action='append', required=True)
         parser.add_argument('--field', action='append', required=True)
         parser.add_argument('--record', default='')
+        parser.add_argument('--crawl', default='pages', choices=('pages', 'site'))
+        parser.add_argument('--allow-host', action='append', default=[])
+        parser.add_argument('--visit-prefix', default='')
+        parser.add_argument('--extract-prefix', default='')
+        parser.add_argument('--depth', type=int, default=2)
+        parser.add_argument('--max-pages', type=int, default=50)
         parser.add_argument('--user-public-id', required=True)
         parser.add_argument('--title', default='Сбор')
 
@@ -28,6 +34,7 @@ class Command(BaseCommand):
                 seed_urls=options['url'],
                 fields=fields,
                 record=_parse_record(options['record']),
+                crawl=_crawl(options),
             )
             run = explore_job(job=job, user_public_id=user.public_id)
         except ScoutError as exc:
@@ -47,6 +54,19 @@ def _user(public_id: str):
     if user is None:
         raise CommandError('Пользователь с таким public_id не найден.')
     return user
+
+
+def _crawl(options) -> dict:
+    visit = options['visit_prefix']
+    extract_on = options['extract_prefix']
+    return {
+        'mode': options['crawl'],
+        'allowed_hosts': options['allow_host'],
+        'visit': [{'kind': 'prefix', 'pattern': visit}] if visit else [],
+        'extract_on': [{'kind': 'prefix', 'pattern': extract_on}] if extract_on else [],
+        'max_depth': options['depth'],
+        'max_pages': options['max_pages'],
+    }
 
 
 def _parse_record(raw: str):
