@@ -35,6 +35,7 @@ def run_payload(run, *, preview=None) -> dict:
         'error_summary': run.error_summary,
         'job_public_id': str(run.job_revision.job.public_id),
         'plan_hash': run.job_revision.plan_hash,
+        'crawl': run.job_revision.crawl or {'mode': 'pages'},
         'approved': bool(run.job_revision.approved_plan_hash)
         and run.job_revision.approved_plan_hash == run.job_revision.plan_hash,
         'snapshot_count': run.snapshots.count(),
