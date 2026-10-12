@@ -117,7 +117,7 @@ const events = computed(() => (Array.isArray(run.value?.events) ? run.value.even
 const evidenceLines = computed(() => shownRows.value.flatMap((row, index) => (
   (row.evidence || []).map((item) => {
     const value = item.normalized_value || item.raw_value || t('scout.flow.notFound')
-    const place = [item.source_url, item.locator].filter(Boolean).join(' · ')
+    const place = [item.source_url || row.source_url, item.locator].filter(Boolean).join(' · ')
     return place
       ? `${index + 1}. ${item.field_path}: ${value} — ${place}`
       : `${index + 1}. ${item.field_path}: ${value}`
