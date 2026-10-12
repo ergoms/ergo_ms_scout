@@ -5,3 +5,7 @@ commands:
     summary: "Create a job from a page address and queue the download"
   approve-run:
     summary: "Confirm the run plan and queue record extraction"
+notes:
+  - "Crawl: --crawl site --allow-host example.com --visit-prefix /catalog --extract-prefix /catalog/item --depth 2 --max-pages 50"
+  - "Budget: --max-seconds 600 --max-total-bytes 20000000 --frontier-cap 200 --parallel-fetch 2 --fetch-delay-ms 0"
+  - "Preview: --preview-url https://example.com/catalog/item/1 --preview-pages 3; full crawl starts only after approve-run"

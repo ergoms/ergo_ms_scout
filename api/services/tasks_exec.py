@@ -1,6 +1,7 @@
 """Выдача задач, захват с fencing и выполнение одной попытки."""
 
 import logging
+import math
 import os
 from datetime import timedelta
 
@@ -92,6 +93,8 @@ def _settle_idle_runs(run_public_id=None) -> None:
         with transaction.atomic():
             locked = Run.objects.select_for_update().get(pk=run_id)
             if locked.status == RUN_RUNNING:
+                from .crawl_budget import reconcile
+                reconcile(locked)
                 _finish_if_idle(locked)
 
 
@@ -195,7 +198,7 @@ def _claim(task_public_id: str, fencing_token: int):
             return None
         if task.status not in (TASK_PENDING, TASK_RETRY_WAIT):
             return None
-        if task.status == TASK_RETRY_WAIT and task.next_retry_at and task.next_retry_at > timezone.now():
+        if task.next_retry_at and task.next_retry_at > timezone.now():
             return None
         if run.status not in CLAIMABLE_RUN_STATUSES:
             return None
@@ -207,6 +210,12 @@ def _claim(task_public_id: str, fencing_token: int):
                 status=TASK_LEASED,
             ).exclude(pk=task.pk).count()
             if busy >= limit:
+                task.published_at = None
+                task.save(update_fields=['published_at'])
+                return None
+            from .crawl_budget import admit_fetch
+            if not admit_fetch(run, task):
+                advance_run(run)
                 return None
         task.fencing_token += 1
         task.status = TASK_LEASED
@@ -219,10 +228,25 @@ def _claim(task_public_id: str, fencing_token: int):
 
 def _fetch(task: Task, token: int) -> None:
     limits = task.run.job_revision.limits
+    crawl = task.run.job_revision.crawl or {}
+    url_allowed = None
+    timeout = int(limits['timeout_seconds'])
+    if crawl.get('mode') == 'site' and task.run.status != 'exploring' and task.run.started_at:
+        remaining = crawl['max_seconds'] - (timezone.now() - task.run.started_at).total_seconds()
+        timeout = max(1, min(timeout, math.ceil(remaining)))
+    if crawl.get('mode') == 'site':
+        from .url_norm import host_allowed, resolve_url, rules_match
+
+        def url_allowed(url):
+            normalized, _reason = resolve_url(url, url, crawl.get('drop_query'))
+            return bool(normalized and host_allowed(normalized, crawl.get('allowed_hosts'))
+                        and (task.run.status == 'exploring' or rules_match(normalized, crawl.get('visit'))))
+
     result = fetch_html(
         task.payload['url'],
-        timeout_seconds=int(limits['timeout_seconds']),
-        max_bytes=int(limits['max_bytes']),
+        timeout_seconds=timeout,
+        max_bytes=int(task.payload.get('byte_allowance') or limits['max_bytes']),
+        url_allowed=url_allowed,
     )
     digest, relative = store_snapshot_bytes(result['body'])
 
@@ -324,9 +348,18 @@ def _crawl(task: Task, token: int) -> None:
 
 def _finish(task: Task, token: int, write) -> None:
     with transaction.atomic():
-        Run.objects.select_for_update().get(pk=task.run_id)
+        run = Run.objects.select_for_update().get(pk=task.run_id)
         locked = Task.objects.select_for_update().get(pk=task.pk)
         if locked.fencing_token != token or locked.status != TASK_LEASED:
+            return
+        if run.status in (RUN_CANCELLING, RUN_CANCELLED):
+            locked.status = TASK_CANCELLED
+            locked.lease_until = None
+            locked.save(update_fields=['status', 'lease_until'])
+            Attempt.objects.filter(task=locked, fencing_token=token).update(
+                status=TASK_CANCELLED, finished_at=timezone.now(),
+            )
+            advance_run(run)
             return
         write()
         locked.status = TASK_SUCCEEDED
@@ -350,7 +383,19 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
             return
         locked.error_code = code[:64]
         locked.error_message = text
-        if retryable and locked.attempt_count < MAX_ATTEMPTS:
+        if run.status in (RUN_CANCELLING, RUN_CANCELLED):
+            locked.status = TASK_CANCELLED
+            locked.lease_until = None
+        elif code == 'too_large' and locked.payload.get('byte_allowance', limits_max_bytes(run)) < limits_max_bytes(run):
+            from .crawl_budget import stop_fetches
+            stop_fetches(run, 'bytes')
+            locked.status = TASK_CANCELLED
+            locked.lease_until = None
+            from ..models import CrawlURL
+            CrawlURL.objects.filter(run=run, public_id=locked.payload.get('crawl_public_id')).update(
+                state='skipped', skip_reason='bytes',
+            )
+        elif retryable and locked.attempt_count < MAX_ATTEMPTS:
             locked.status = TASK_RETRY_WAIT
             delay = 2 * locked.attempt_count
             locked.next_retry_at = timezone.now() if inline_runner() else timezone.now() + timedelta(seconds=delay)
@@ -387,3 +432,7 @@ def _schedule_retry(run_public_id, delay: int) -> None:
         dispatch_scout_pending.apply_async(args=[run_id], countdown=max(delay, 1))
 
     transaction.on_commit(_go)
+
+
+def limits_max_bytes(run) -> int:
+    return int(run.job_revision.limits['max_bytes'])

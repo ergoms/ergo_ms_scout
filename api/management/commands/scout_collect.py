@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
 from ...services.errors import ScoutError
+from ...services.constants import CRAWL_LIMITS
 from ...services.runs import create_job, explore_job
 from ...services.tasks_exec import schedule_publish
 
@@ -21,6 +22,13 @@ class Command(BaseCommand):
         parser.add_argument('--extract-prefix', default='')
         parser.add_argument('--depth', type=int, default=2)
         parser.add_argument('--max-pages', type=int, default=50)
+        parser.add_argument('--preview-url', action='append', default=[])
+        parser.add_argument('--preview-pages', type=int, default=CRAWL_LIMITS['preview_pages'])
+        parser.add_argument('--max-seconds', type=int, default=CRAWL_LIMITS['max_seconds'])
+        parser.add_argument('--max-total-bytes', type=int, default=CRAWL_LIMITS['max_total_bytes'])
+        parser.add_argument('--frontier-cap', type=int, default=CRAWL_LIMITS['frontier_cap'])
+        parser.add_argument('--fetch-delay-ms', type=int, default=CRAWL_LIMITS['fetch_delay_ms'])
+        parser.add_argument('--parallel-fetch', type=int, default=CRAWL_LIMITS['parallel_fetch'])
         parser.add_argument('--user-public-id', required=True)
         parser.add_argument('--title', default='Сбор')
 
@@ -66,6 +74,13 @@ def _crawl(options) -> dict:
         'extract_on': [{'kind': 'prefix', 'pattern': extract_on}] if extract_on else [],
         'max_depth': options['depth'],
         'max_pages': options['max_pages'],
+        'preview_urls': options['preview_url'],
+        'preview_pages': options['preview_pages'],
+        'max_seconds': options['max_seconds'],
+        'max_total_bytes': options['max_total_bytes'],
+        'frontier_cap': options['frontier_cap'],
+        'fetch_delay_ms': options['fetch_delay_ms'],
+        'parallel_fetch': options['parallel_fetch'],
     }
 
 

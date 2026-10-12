@@ -5,3 +5,7 @@ commands:
     summary: "Créer une tâche à partir d’une adresse et mettre le chargement en file"
   approve-run:
     summary: "Confirmer le plan du lancement et mettre l’extraction en file"
+notes:
+  - "Parcours : --crawl site --allow-host example.com --visit-prefix /catalog --extract-prefix /catalog/item --depth 2 --max-pages 50"
+  - "Budget : --max-seconds 600 --max-total-bytes 20000000 --frontier-cap 200 --parallel-fetch 2 --fetch-delay-ms 0"
+  - "Aperçu : --preview-url https://example.com/catalog/item/1 --preview-pages 3 ; le parcours complet commence après approve-run"

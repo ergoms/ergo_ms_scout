@@ -24,6 +24,11 @@ def _site(port_holder):
         def do_GET(self):
             host = self.headers.get('Host')
             path = self.path.split('?', 1)[0]
+            if path == '/out':
+                self.send_response(302)
+                self.send_header('Location', f'http://localhost:{self.server.server_port}/quiet')
+                self.end_headers()
+                return
             if path == '/go':
                 self.send_response(302)
                 self.send_header('Location', f'http://{host}/quiet')
@@ -51,6 +56,10 @@ def _site(port_holder):
 
 
 def _body(path, host):
+    if path.startswith('/storm'):
+        return '<h1>Storm</h1>' + ''.join(f'<a href="/{i}.pdf">skip</a>' for i in range(60))
+    if path.startswith('/wide'):
+        return '<h1>Wide</h1>' + ''.join(f'<a href="/item/{i}">item</a>' for i in range(10))
     if 'page=2' in path:
         return '<html><body><h1>Page2</h1><a href="/item?id=9">id</a></body></html>'
     if path.startswith('/a'):
@@ -242,6 +251,104 @@ class CrawlTests(TestCase):
         run.refresh_from_db()
         self.assertEqual(run.status, 'awaiting_confirmation')
         self.assertEqual(run.snapshots.count(), 1)
+
+    def test_skipped_urls_are_bounded_by_frontier_cap(self):
+        run = self._crawl('/storm', frontier_cap=3)
+        self.assertEqual(run.status, RUN_COMPLETED)
+        self.assertEqual(run.crawl_urls.count(), 3)
+        self.assertEqual(run.stop_reason, 'frontier')
+
+    def test_preview_seed_still_respects_main_visit_filter(self):
+        run = self._crawl('/a', visit=[{'kind': 'prefix', 'pattern': '/b'}])
+        self.assertEqual(run.status, RUN_COMPLETED)
+        self.assertEqual(run.records.count(), 0)
+        self.assertTrue(run.crawl_urls.filter(skip_reason='visit').exists())
+
+    def test_unvisited_control_preview_does_not_use_main_byte_budget(self):
+        run = self._crawl('/quiet', preview_urls=[f'{self.origin}/wide'], max_total_bytes=100)
+        self.assertEqual(run.status, RUN_COMPLETED)
+        self.assertEqual(run.records.count(), 1)
+        self.assertEqual(run.stop_reason, '')
+
+    def test_redirect_alias_cancels_an_unclaimed_fetch(self):
+        from modules.scout.api.services.frontier import _alias_redirect
+
+        run = self._crawl('/go', max_pages=5)
+        snapshot = run.snapshots.get()
+        row = run.crawl_urls.get(normalized_url=f'{self.origin}/quiet')
+        row.state = 'active'
+        row.save(update_fields=['state'])
+        task = Task.objects.create(run=run, kind='fetch', status=TASK_PENDING,
+                                   idempotency_key=f'fetch:{row.url_key}',
+                                   payload={'url': row.normalized_url}, fencing_token=1)
+        _alias_redirect(run, snapshot)
+        row.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(row.state, 'done')
+        self.assertEqual(task.status, 'cancelled')
+
+    def test_fetch_finishing_during_pause_can_resume(self):
+        from modules.scout.api.services.tasks_exec import _claim, _fetch, run_one
+
+        job = create_job(user_public_id=self.user.public_id, title='Пауза загрузки',
+                         seed_urls=[f'{self.origin}/a'], fields=FIELDS,
+                         crawl={'mode': 'site', 'allowed_hosts': ['127.0.0.1']})
+        run = explore_job(job=job, user_public_id=self.user.public_id)
+        publish_ready(str(run.public_id))
+        approve_run(run=run, user_public_id=self.user.public_id)
+        run = start_run(run=run)
+        crawl_task = run.tasks.get(kind='crawl')
+        run_one(str(crawl_task.public_id), crawl_task.fencing_token)
+        fetch_task = run.tasks.get(kind='fetch', status='pending')
+        task, token = _claim(str(fetch_task.public_id), fetch_task.fencing_token)
+        pause_run(run=run)
+        _fetch(task, token)
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'paused')
+        self.assertFalse(run.crawl_urls.filter(state='active').exists())
+        resume_run(run=run)
+        publish_ready(str(run.public_id))
+        run.refresh_from_db()
+        self.assertEqual(run.status, RUN_COMPLETED)
+        self.assertEqual(run.records.count(), 2)
+
+    def test_cancel_discards_an_inflight_fetch_result(self):
+        from modules.scout.api.services.tasks_exec import _claim, _fetch, run_one
+        from modules.scout.api.services.runs import cancel_run
+
+        job = create_job(user_public_id=self.user.public_id, title='Отмена загрузки',
+                         seed_urls=[f'{self.origin}/a'], fields=FIELDS,
+                         crawl={'mode': 'site', 'allowed_hosts': ['127.0.0.1']})
+        run = explore_job(job=job, user_public_id=self.user.public_id)
+        publish_ready(str(run.public_id))
+        approve_run(run=run, user_public_id=self.user.public_id)
+        run = start_run(run=run)
+        crawl_task = run.tasks.get(kind='crawl')
+        run_one(str(crawl_task.public_id), crawl_task.fencing_token)
+        fetch_task = run.tasks.get(kind='fetch', status='pending')
+        task, token = _claim(str(fetch_task.public_id), fetch_task.fencing_token)
+        cancel_run(run=run)
+        _fetch(task, token)
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'cancelled')
+        self.assertEqual(run.snapshots.count(), 1)
+        self.assertFalse(run.crawl_urls.filter(state__in=('queued', 'active')).exists())
+
+    def test_byte_budget_applies_to_already_queued_fetches(self):
+        run = self._crawl('/wide', max_total_bytes=400)
+        self.assertEqual(run.status, RUN_COMPLETED)
+        self.assertEqual(run.stop_reason, 'bytes')
+        self.assertLessEqual(sum(run.snapshots.values_list('byte_size', flat=True)), 400)
+
+    def test_redirect_cannot_escape_allowed_host(self):
+        from modules.scout.api.services.http_fetch import fetch_html
+        from modules.scout.api.services.url_norm import host_allowed
+        from modules.scout.api.services.errors import FetchError
+
+        with self.assertRaises(FetchError) as caught:
+            fetch_html(f'{self.origin}/out', timeout_seconds=5, max_bytes=1000,
+                       url_allowed=lambda url: host_allowed(url, ['127.0.0.1']))
+        self.assertEqual(caught.exception.code, 'redirect_scope')
 
 
 class AccessTests(TestCase):

@@ -10,6 +10,7 @@ from django.utils.translation import gettext as _
 
 from .constants import CRAWL_LIMITS, DEFAULT_LIMITS, DROP_QUERY
 from .errors import ScoutError
+from .url_norm import resolve_url, host_allowed
 
 _NAME = re.compile(r'^[a-z][a-z0-9_]{0,40}$')
 _KINDS = {'css', 'xpath'}
@@ -40,6 +41,17 @@ def normalize_plan(seed_urls, fields, limits=None, record=None, crawl=None) -> d
     merged_limits['max_pages'] = max_pages
     merged_limits['max_bytes'] = max(1, min(int(merged_limits['max_bytes']), DEFAULT_LIMITS['max_bytes']))
     merged_limits['timeout_seconds'] = max(1, min(int(merged_limits['timeout_seconds']), 60))
+    clean_crawl = _clean_crawl(crawl, urls)
+    if clean_crawl['mode'] == 'site':
+        normalized_urls = []
+        for url in urls:
+            normalized, _reason = resolve_url(url, url, clean_crawl['drop_query'])
+            if not normalized or not host_allowed(normalized, clean_crawl['allowed_hosts']):
+                raise ScoutError('invalid', _('Начальный адрес выходит за пределы обхода'))
+            if normalized not in normalized_urls:
+                normalized_urls.append(normalized)
+        urls = normalized_urls
+        max_pages = min(clean_crawl['max_pages'], clean_crawl['frontier_cap'])
     if len(urls) > max_pages:
         raise ScoutError('invalid', _('В первой версии не больше %(count)s адресов') % {'count': max_pages})
 
@@ -83,12 +95,15 @@ def normalize_plan(seed_urls, fields, limits=None, record=None, crawl=None) -> d
         'record': clean_record,
         'fields': clean_fields,
         'limits': merged_limits,
-        'crawl': _clean_crawl(crawl, urls),
+        'crawl': clean_crawl,
     }
 
 
 def _clean_crawl(crawl, seed_urls) -> dict:
     raw = crawl if isinstance(crawl, dict) else {}
+    drop_query = raw.get('drop_query', DROP_QUERY)
+    if not isinstance(drop_query, (list, tuple)) or any(not isinstance(key, str) for key in drop_query):
+        raise ScoutError('invalid', _('Правило адреса задано неверно'))
     mode = str(raw.get('mode') or 'pages')
     if mode not in ('pages', 'site'):
         raise ScoutError('invalid', _('Режим обхода: pages или site'))
@@ -103,7 +118,7 @@ def _clean_crawl(crawl, seed_urls) -> dict:
             for url in seed_urls
             if urlparse(url).hostname
         })
-    return {
+    result = {
         'mode': mode,
         'allowed_hosts': hosts,
         'visit': _clean_rules(raw.get('visit')),
@@ -118,8 +133,18 @@ def _clean_crawl(crawl, seed_urls) -> dict:
         'max_total_bytes': _clamp(
             raw.get('max_total_bytes'), 1, 50_000_000, CRAWL_LIMITS['max_total_bytes'],
         ),
-        'drop_query': list(DROP_QUERY),
+        'drop_query': list(drop_query),
     }
+    result['preview_urls'] = []
+    for url in (raw.get('preview_urls') or []) if mode == 'site' else []:
+        normalized, _reason = resolve_url(str(url), str(url), result['drop_query'])
+        if not normalized or not host_allowed(normalized, hosts):
+            raise ScoutError('invalid', _('Адрес предпросмотра выходит за пределы обхода'))
+        if normalized not in result['preview_urls']:
+            result['preview_urls'].append(normalized)
+    if len(result['preview_urls']) > result['preview_pages']:
+        raise ScoutError('invalid', _('Превышен лимит страниц предпросмотра'))
+    return result
 
 
 def _clean_rules(rules) -> list:

@@ -1,7 +1,7 @@
 """Нормализация адреса для обхода. Длинный URL не становится ключом задачи."""
 
 import hashlib
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import unquote_plus, urljoin, urlparse, urlunparse
 
 _SKIP_SUFFIXES = {
     'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico',
@@ -22,12 +22,21 @@ def resolve_url(href: str, base: str, drop_query) -> tuple[str | None, str]:
     lowered = raw.lower()
     if lowered.startswith(('mailto:', 'javascript:', 'data:', 'tel:')):
         return None, 'scheme'
-    absolute = urljoin(base or '', raw)
-    parts = urlparse(absolute)
+    try:
+        absolute = urljoin(base or '', raw)
+        parts = urlparse(absolute)
+        port = parts.port
+        host = (parts.hostname or '').lower()
+    except ValueError:
+        return None, 'invalid_url'
     if parts.scheme not in ('http', 'https') or not parts.hostname:
         return None, 'scheme'
-    host = parts.hostname.lower()
-    port = parts.port
+    if parts.username or parts.password:
+        return None, 'credentials'
+    try:
+        host = f'[{host}]' if ':' in host else host.encode('idna').decode('ascii')
+    except UnicodeError:
+        return None, 'invalid_url'
     if port and not (
         (parts.scheme == 'http' and port == 80)
         or (parts.scheme == 'https' and port == 443)
@@ -43,12 +52,10 @@ def resolve_url(href: str, base: str, drop_query) -> tuple[str | None, str]:
     if suffix in _SKIP_SUFFIXES:
         return None, 'document'
     drop = set(drop_query or [])
-    query = urlencode([
-        (key, value)
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
-        if key not in drop
-    ])
-    return urlunparse((parts.scheme, netloc, path, '', query, '')), ''
+    # Re-encoding query can change signed URLs, plus/space and repeated parameters.
+    query = '&'.join(piece for piece in parts.query.split('&')
+                     if unquote_plus(piece.split('=', 1)[0]) not in drop)
+    return urlunparse((parts.scheme, netloc, path, parts.params, query, '')), ''
 
 
 def host_allowed(url: str, allowed_hosts) -> bool:

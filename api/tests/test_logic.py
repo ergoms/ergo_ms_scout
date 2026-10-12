@@ -171,3 +171,19 @@ class FetchKeyTests(TestCase):
         revise_job(job=job, seed_urls=[url], fields=fields, title='Новое')
         job.refresh_from_db()
         self.assertEqual(job.title, 'Новое')
+
+
+class URLIdentityTests(SimpleTestCase):
+    def test_query_encoding_repeats_order_and_path_params_are_preserved(self):
+        from modules.scout.api.services.url_norm import resolve_url
+
+        url = 'HTTP://EXAMPLE.com:80/p;variant?x=%20&x=+&id=9&utm_source=a&page=2#fragment'
+        normalized, reason = resolve_url(url, url, ['utm_source'])
+        self.assertEqual(reason, '')
+        self.assertEqual(normalized, 'http://example.com/p;variant?x=%20&x=+&id=9&page=2')
+
+    def test_invalid_port_is_a_skipped_link(self):
+        from modules.scout.api.services.url_norm import resolve_url
+
+        self.assertEqual(resolve_url('http://example.com:bad/', 'http://example.com/', []),
+                         (None, 'invalid_url'))

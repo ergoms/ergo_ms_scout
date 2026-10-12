@@ -12,6 +12,10 @@ import { handleApiError, showError } from '@/js/utils/toast.js'
 import { downloadMediaFromResult } from '@/js/utils/mediaDownload.js'
 
 import { scoutEndpoints } from '../js/endpoints.js'
+import ScoutCrawlSummary from './ScoutCrawlSummary.vue'
+import ScoutCrawlSettings from './ScoutCrawlSettings.vue'
+import { defaultCrawlLimits } from '../js/crawlLimits.js'
+import { flattenValues } from '../js/recordTable.js'
 
 const PREVIEW_LIMIT = 20
 const STEPS = ['setup', 'preview', 'collect', 'result']
@@ -36,6 +40,8 @@ const visitPrefix = ref('')
 const extractPrefix = ref('')
 const crawlDepth = ref(2)
 const crawlPages = ref(50)
+const crawlLimits = ref(defaultCrawlLimits())
+const previewUrl = ref('')
 const fields = ref([blankField()])
 const run = ref(null)
 const records = ref([])
@@ -89,7 +95,7 @@ const shownRows = computed(() => {
   if (stage.value === 'collect') return sourceRows.value.slice(-PREVIEW_LIMIT)
   return sourceRows.value
 })
-const tableRows = computed(() => shownRows.value.map((row, index) => flattenValues(row.values, row.public_id || index)))
+const tableRows = computed(() => shownRows.value.map((row, index) => flattenValues(row.values, row.public_id || index, t('scout.flow.notFound'))))
 const columns = computed(() => {
   const keys = []
   tableRows.value.forEach((row) => {
@@ -172,11 +178,13 @@ function payload() {
 function crawlPayload() {
   const rules = (prefix) => (prefix.trim() ? [{ kind: 'prefix', pattern: prefix.trim() }] : [])
   return {
+    ...crawlLimits.value,
+    preview_urls: previewUrl.value.trim() ? [previewUrl.value.trim()] : [],
     mode: crawlMode.value === 'site' ? 'site' : 'pages',
     allowed_hosts: allowedHosts.value.split(',').map((item) => item.trim()).filter(Boolean),
     visit: rules(visitPrefix.value),
     extract_on: rules(extractPrefix.value),
-    max_depth: Number(crawlDepth.value) || 2,
+    max_depth: crawlDepth.value === '' ? 2 : Number(crawlDepth.value),
     max_pages: Number(crawlPages.value) || 50,
   }
 }
@@ -198,8 +206,10 @@ function applyJob(job) {
   allowedHosts.value = Array.isArray(savedCrawl.allowed_hosts) ? savedCrawl.allowed_hosts.join(', ') : ''
   visitPrefix.value = savedCrawl.visit?.[0]?.pattern || ''
   extractPrefix.value = savedCrawl.extract_on?.[0]?.pattern || ''
-  crawlDepth.value = savedCrawl.max_depth || 2
+  crawlDepth.value = savedCrawl.max_depth ?? 2
   crawlPages.value = savedCrawl.max_pages || 50
+  crawlLimits.value = defaultCrawlLimits(savedCrawl)
+  previewUrl.value = savedCrawl.preview_urls?.[0] || ''
   const savedFields = Array.isArray(revision?.fields) ? revision.fields : []
   if (!savedFields.length) return
   fields.value = savedFields.map((field) => ({
@@ -247,19 +257,6 @@ function stepMark(id) {
   return 'future'
 }
 
-function cellText(cell) {
-  const text = String(cell?.normalized || cell?.raw || '').trim()
-  return text || t('scout.flow.notFound')
-}
-
-function flattenValues(values, id) {
-  const row = { id }
-  Object.entries(values || {}).forEach(([key, cell]) => {
-    row[key] = cellText(cell)
-  })
-  return row
-}
-
 function clearRunView() {
   window.clearTimeout(pollTimer)
   run.value = null
@@ -287,10 +284,12 @@ async function checkPage() {
   try {
     const body = payload()
     const existing = query.value.job
+    const previousRun = query.value.run
     const saved = existing
       ? await apiClient.patch(scoutEndpoints.job(existing), body)
       : await apiClient.post(scoutEndpoints.jobs, body)
     if (generation !== editorGeneration) return
+    if (query.value.job !== existing || query.value.run !== previousRun) return
     if (!saved.success) {
       showError(saved.message || t('scout.flow.checkFailed'))
       return
@@ -300,6 +299,7 @@ async function checkPage() {
     patchState({ job: saved.data.public_id, run: '' })
     const explored = await apiClient.post(scoutEndpoints.explore(saved.data.public_id), {})
     if (generation !== editorGeneration) return
+    if (query.value.job !== saved.data.public_id) return
     if (!explored.success) {
       showError(explored.message || t('scout.flow.checkFailed'))
       return
@@ -331,6 +331,8 @@ function newJob() {
   extractPrefix.value = ''
   crawlDepth.value = 2
   crawlPages.value = 50
+  crawlLimits.value = defaultCrawlLimits()
+  previewUrl.value = ''
   fields.value = [blankField()]
   fieldErrors.value = ['']
   urlError.value = ''
@@ -523,27 +525,7 @@ function schedulePoll() {
             <div v-if="cardError" class="text-danger small mt-1">{{ cardError }}</div>
           </FormField>
         </template>
-        <div class="d-flex flex-wrap gap-3 py-2">
-          <label><input v-model="crawlMode" type="radio" value="pages"> {{ t('scout.flow.pagesOnly') }}</label>
-          <label><input v-model="crawlMode" type="radio" value="site"> {{ t('scout.flow.crawlSite') }}</label>
-        </div>
-        <template v-if="crawlMode === 'site'">
-          <FormField :label="t('scout.flow.allowedHosts')" label-for="scout-hosts">
-            <input id="scout-hosts" v-model="allowedHosts" class="form-control" type="text">
-          </FormField>
-          <FormField :label="t('scout.flow.visitPrefix')" label-for="scout-visit">
-            <input id="scout-visit" v-model="visitPrefix" class="form-control" type="text" placeholder="/catalog">
-          </FormField>
-          <FormField :label="t('scout.flow.extractPrefix')" label-for="scout-extract">
-            <input id="scout-extract" v-model="extractPrefix" class="form-control" type="text" placeholder="/item">
-          </FormField>
-          <FormField :label="t('scout.flow.depth')" label-for="scout-depth">
-            <input id="scout-depth" v-model="crawlDepth" class="form-control" type="number" min="0" max="5">
-          </FormField>
-          <FormField :label="t('scout.flow.crawlPages')" label-for="scout-pages">
-            <input id="scout-pages" v-model="crawlPages" class="form-control" type="number" min="1" max="200">
-          </FormField>
-        </template>
+        <ScoutCrawlSettings v-model:mode="crawlMode" v-model:hosts="allowedHosts" v-model:visit="visitPrefix" v-model:extract="extractPrefix" v-model:depth="crawlDepth" v-model:pages="crawlPages" v-model:limits="crawlLimits" v-model:preview-url="previewUrl" />
         <div v-for="(field, index) in fields" :key="`rule-${index}`" class="border-top pt-2">
           <FormField :label="`${field.name || t('scout.fieldName')}: ${t('scout.fieldKind')}`">
             <SelectBox v-model="field.kind" :options="kindOptions" value-key="id" label-key="name" :include-all-option="false" />
@@ -576,6 +558,7 @@ function schedulePoll() {
       <template v-else>
         <p v-if="confirmedNotStarted">{{ t('scout.flow.startHeld') }}</p>
         <p>{{ t('scout.flow.planLead', { url, fields: fields.map((field) => field.name).filter(Boolean).join(', ') }) }}</p>
+        <ScoutCrawlSummary v-if="(run?.crawl?.mode || crawlMode) === 'site'" :run="run" :depth="crawlDepth" :pages="crawlPages" :hosts="allowedHosts" :limits="crawlLimits" :visit="visitPrefix" :extract="extractPrefix" />
         <p v-if="sourceRows.length">{{ t('scout.flow.sample', { shown: shownRows.length, total: sourceRows.length }) }}</p>
         <p v-if="gapCount">{{ t('scout.flow.gaps', { count: gapCount }) }}</p>
         <p v-if="!sourceRows.length">{{ t('scout.flow.previewEmpty') }}</p>
@@ -642,10 +625,7 @@ function schedulePoll() {
         · {{ t('scout.flow.gotRecords', { records: pageProgress.records }) }}
         <template v-if="pageProgress.errors"> · {{ t('scout.flow.progressErrors', { count: pageProgress.errors }) }}</template>
       </p>
-      <p v-if="run?.frontier && crawlMode === 'site'">
-        {{ t('scout.flow.frontierLine', run.frontier) }}
-        <template v-if="run.stop_reason"> · {{ run.stop_reason }}</template>
-      </p>
+      <ScoutCrawlSummary v-if="(run?.crawl?.mode || crawlMode) === 'site'" :run="run" :depth="crawlDepth" :pages="crawlPages" :hosts="allowedHosts" :limits="crawlLimits" :visit="visitPrefix" :extract="extractPrefix" />
       <p v-if="sourceRows.length > shownRows.length">{{ t('scout.flow.recent', { shown: shownRows.length, total: sourceRows.length }) }}</p>
       <p v-if="!records.length">{{ t('scout.flow.waitingRows') }}</p>
       <DataTable
@@ -679,6 +659,7 @@ function schedulePoll() {
         {{ run?.status === 'completed_with_errors' ? t('scout.flow.finishedErrors') : run?.status === 'failed' ? t('scout.flow.failedLead') : run?.status === 'cancelled' ? t('scout.flow.cancelledLead') : t('scout.flow.finished') }}
       </h2>
       <p v-if="run?.error_summary">{{ run.error_summary }}</p>
+      <ScoutCrawlSummary v-if="(run?.crawl?.mode || crawlMode) === 'site'" :run="run" :depth="crawlDepth" :pages="crawlPages" :hosts="allowedHosts" :limits="crawlLimits" :visit="visitPrefix" :extract="extractPrefix" />
       <p v-if="pageProgress.fetchTotal || pageProgress.extractTotal">
         <span v-if="pageProgress.fetchTotal">{{ t('scout.flow.loaded', pageProgress) }}</span>
         <template v-if="pageProgress.extractTotal"> · {{ t('scout.flow.extracted', pageProgress) }}</template>

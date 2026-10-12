@@ -10,6 +10,7 @@ from django.utils.translation import gettext as _
 from ..models import (
     ExtractionRulesRevision,
     ExtractionSchemaRevision,
+    CrawlURL,
     Job,
     JobRevision,
     Run,
@@ -80,7 +81,7 @@ def explore_job(*, job: Job, user_public_id) -> Run:
         )
         urls = list(revision.seed_urls)
         if (revision.crawl or {}).get('mode') == 'site':
-            urls = urls[:int((revision.crawl or {}).get('preview_pages') or 3)]
+            urls = (revision.crawl.get('preview_urls') or urls)[:int(revision.crawl.get('preview_pages') or 3)]
         for url in urls:
             Task.objects.create(
                 run=run,
@@ -117,7 +118,8 @@ def start_run(*, run: Run) -> Run:
         if not revision.approved_plan_hash or revision.approved_plan_hash != revision.plan_hash:
             raise ScoutError('approval_required', _('Сбор без подтверждения этого плана запрещён'))
         locked.status = RUN_RUNNING
-        locked.save(update_fields=['status'])
+        locked.started_at = timezone.now()
+        locked.save(update_fields=['status', 'started_at'])
         if (locked.job_revision.crawl or {}).get('mode') == 'site':
             from .frontier import open_site
             open_site(locked)
@@ -148,8 +150,8 @@ def resume_run(*, run: Run) -> Run:
             raise ScoutError('approval_required', _('Сбор без подтверждения этого плана запрещён'))
         locked.status = RUN_RUNNING
         locked.save(update_fields=['status'])
-        from .frontier import release_queued
-        release_queued(locked)
+        from .crawl_budget import reconcile
+        reconcile(locked)
         _finish_if_idle(locked)
     return Run.objects.get(pk=run.pk)
 
@@ -168,6 +170,9 @@ def cancel_run(*, run: Run) -> Run:
         locked.status = RUN_CANCELLING
         locked.save(update_fields=['status'])
         locked.tasks.filter(status__in=(TASK_PENDING, TASK_RETRY_WAIT)).update(status=TASK_CANCELLED)
+        CrawlURL.objects.filter(run=locked, state__in=('queued', 'active')).update(
+            state='skipped', skip_reason='cancelled',
+        )
         advance_run(locked)
     return Run.objects.get(pk=run.pk)
 

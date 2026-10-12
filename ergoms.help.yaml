@@ -12,3 +12,6 @@ notes:
   - "Вызов: ergoms scout:collect --url http://example.com --field title=css:.title --user-public-id <uuid>"
   - "Повторяющееся поле: имя со звёздочкой, например title*=css:.card .title"
   - "Для сбора должны быть запущены база, брокер очереди и ergoms start-worker --module=scout"
+  - "Обход: --crawl site --allow-host example.com --visit-prefix /catalog --extract-prefix /catalog/item --depth 2 --max-pages 50"
+  - "Бюджет обхода: --max-seconds 600 --max-total-bytes 20000000 --frontier-cap 200 --parallel-fetch 2 --fetch-delay-ms 0"
+  - "Контрольная страница: --preview-url https://example.com/catalog/item/1 --preview-pages 3; полный обход начинается после approve-run"

@@ -22,7 +22,7 @@ from .constants import (
 from .page_links import iter_hrefs
 from .url_norm import host_allowed, resolve_url, rules_match, url_key
 
-_COUNTING = (CRAWL_QUEUED, CRAWL_ACTIVE, CRAWL_DONE)
+_COUNTING = (CRAWL_QUEUED, CRAWL_ACTIVE, CRAWL_DONE, CRAWL_FAILED)
 
 
 def blocks_completion(run: Run) -> bool:
@@ -35,19 +35,12 @@ def open_site(run: Run) -> None:
     if crawl.get('mode') != 'site':
         return
     for url in run.job_revision.seed_urls:
-        snapshot = PageSnapshot.objects.filter(run=run, source_url=url).first()
-        if snapshot is not None:
-            _remember_done(run, url, snapshot, depth=0)
-            _alias_redirect(run, snapshot)
-            _schedule_crawl(run, snapshot)
-            _schedule_extract(run, snapshot, crawl)
-            continue
         remember(run, url, base=url, depth=0, parent=None)
 
 
 def note_fetch(run: Run, snapshot: PageSnapshot) -> None:
     crawl = _config(run)
-    if crawl.get('mode') != 'site' or run.status != RUN_RUNNING:
+    if crawl.get('mode') != 'site' or run.status not in (RUN_RUNNING, RUN_PAUSING):
         return
     _remember_done(run, snapshot.source_url, snapshot, depth=0)
     _alias_redirect(run, snapshot)
@@ -87,6 +80,9 @@ def remember(run: Run, raw_url: str, *, base: str, depth: int, parent) -> CrawlU
     existing = CrawlURL.objects.filter(run=run, url_key=key).first()
     if existing is not None:
         return existing
+    if CrawlURL.objects.filter(run=run).count() >= int(crawl.get('frontier_cap') or 1):
+        _stop(run, 'frontier')
+        return None
     if depth > int(crawl.get('max_depth') or 0):
         return _skip(run, normalized, 'depth', depth, parent, key)
     if not host_allowed(normalized, crawl.get('allowed_hosts')):
@@ -104,12 +100,25 @@ def remember(run: Run, raw_url: str, *, base: str, depth: int, parent) -> CrawlU
         parent=parent,
         state=CRAWL_QUEUED,
     )
+    snapshot = PageSnapshot.objects.filter(run=run, source_url=normalized).first()
+    if snapshot is not None:
+        from .crawl_budget import snapshot_bytes
+        if snapshot_bytes(run) + snapshot.byte_size > crawl['max_total_bytes']:
+            _stop(run, 'bytes')
+            row.state = CRAWL_SKIPPED
+            row.skip_reason = 'bytes'
+            row.save(update_fields=['state', 'skip_reason'])
+            return row
+        note_fetch(run, snapshot)
+        return CrawlURL.objects.get(pk=row.pk)
     if run.status == RUN_RUNNING:
         _schedule_fetch(run, row)
     return row
 
 
 def _budget_closed(run: Run, crawl: dict) -> bool:
+    if run.stop_reason in ('time', 'bytes', 'frontier'):
+        return True
     used = CrawlURL.objects.filter(run=run, state__in=_COUNTING).count()
     if used >= int(crawl.get('max_pages') or 1):
         _stop(run, 'max_pages')
@@ -121,7 +130,8 @@ def _budget_closed(run: Run, crawl: dict) -> bool:
     if timezone.now() > started + timedelta(seconds=int(crawl.get('max_seconds') or 1)):
         _stop(run, 'time')
         return True
-    total = sum(PageSnapshot.objects.filter(run=run).values_list('byte_size', flat=True))
+    from .crawl_budget import snapshot_bytes
+    total = snapshot_bytes(run)
     if total >= int(crawl.get('max_total_bytes') or 1):
         _stop(run, 'bytes')
         return True
@@ -135,8 +145,14 @@ def _stop(run: Run, reason: str) -> None:
     run.save(update_fields=['stop_reason'])
 
 
-def _skip(run, url: str, reason: str, depth: int, parent, key: str = '') -> CrawlURL:
+def _skip(run, url: str, reason: str, depth: int, parent, key: str = '') -> CrawlURL | None:
     digest = key or url_key(url or reason)
+    existing = CrawlURL.objects.filter(run=run, url_key=digest).first()
+    if existing is not None:
+        return existing
+    if CrawlURL.objects.filter(run=run).count() >= int(_config(run).get('frontier_cap') or 1):
+        _stop(run, 'frontier')
+        return None
     row, _created = CrawlURL.objects.get_or_create(
         run=run,
         url_key=digest,
@@ -184,6 +200,9 @@ def _alias_redirect(run: Run, snapshot: PageSnapshot) -> None:
     key = url_key(final)
     row = CrawlURL.objects.filter(run=run, url_key=key).first()
     if row is None:
+        if CrawlURL.objects.filter(run=run).count() >= int(_config(run).get('frontier_cap') or 1):
+            _stop(run, 'frontier')
+            return
         CrawlURL.objects.create(
             run=run,
             original_url=final[:2000],
@@ -195,7 +214,8 @@ def _alias_redirect(run: Run, snapshot: PageSnapshot) -> None:
             snapshot=snapshot,
         )
         return
-    if row.state == CRAWL_QUEUED:
+    task = Task.objects.filter(run=run, idempotency_key=f'fetch:{key}').first()
+    if row.state in (CRAWL_QUEUED, CRAWL_ACTIVE) and (task is None or task.status in (TASK_PENDING, 'retry_wait')):
         row.state = CRAWL_DONE
         row.snapshot = snapshot
         row.skip_reason = 'redirect'
@@ -203,13 +223,12 @@ def _alias_redirect(run: Run, snapshot: PageSnapshot) -> None:
         Task.objects.filter(
             run=run,
             idempotency_key=f'fetch:{key}',
-            status=TASK_PENDING,
+            status__in=(TASK_PENDING, 'retry_wait'),
         ).update(status=TASK_CANCELLED)
 
 
 def _schedule_fetch(run: Run, row: CrawlURL) -> None:
-    delay_ms = int(_config(run).get('fetch_delay_ms') or 0)
-    task, created = Task.objects.get_or_create(
+    Task.objects.get_or_create(
         run=run,
         idempotency_key=f'fetch:{row.url_key}',
         defaults={
@@ -219,9 +238,6 @@ def _schedule_fetch(run: Run, row: CrawlURL) -> None:
             'fencing_token': 1,
         },
     )
-    if created and delay_ms and Task.objects.filter(run=run, kind=TASK_FETCH).exclude(pk=task.pk).exists():
-        task.next_retry_at = timezone.now() + timedelta(milliseconds=delay_ms)
-        task.save(update_fields=['next_retry_at'])
     row.state = CRAWL_ACTIVE
     row.save(update_fields=['state'])
 
@@ -241,7 +257,7 @@ def _schedule_crawl(run: Run, snapshot: PageSnapshot) -> None:
 
 def _schedule_extract(run: Run, snapshot: PageSnapshot, crawl: dict) -> None:
     target = snapshot.final_url or snapshot.source_url
-    if not rules_match(target, crawl.get('extract_on')) and not rules_match(snapshot.source_url, crawl.get('extract_on')):
+    if not rules_match(target, crawl.get('extract_on')):
         return
     revision = run.job_revision
     key = f'extract:{snapshot.public_id}:{revision.schema_revision.public_id}:{revision.rules_revision.public_id}'

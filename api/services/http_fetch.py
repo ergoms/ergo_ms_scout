@@ -18,9 +18,10 @@ _HTML_TYPES = ('text/html', 'application/xhtml+xml')
 
 
 class _LimitedRedirect(urlrequest.HTTPRedirectHandler):
-    def __init__(self):
+    def __init__(self, url_allowed=None):
         super().__init__()
         self.redirects = 0
+        self.url_allowed = url_allowed
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         self.redirects += 1
@@ -28,11 +29,15 @@ class _LimitedRedirect(urlrequest.HTTPRedirectHandler):
             raise FetchError('too_many_redirects', _('Слишком много переадресаций'), retryable=False)
         if not str(newurl).startswith(('http://', 'https://')):
             raise FetchError('bad_redirect', _('Переадресация ведёт не на http-адрес'), retryable=False)
+        if self.url_allowed is not None and not self.url_allowed(newurl):
+            raise FetchError('redirect_scope', _('Переадресация выходит за пределы плана'), retryable=False)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch_html(url: str, *, timeout_seconds: int, max_bytes: int) -> dict:
-    opener = urlrequest.build_opener(_LimitedRedirect())
+def fetch_html(url: str, *, timeout_seconds: int, max_bytes: int, url_allowed=None) -> dict:
+    if url_allowed is not None and not url_allowed(url):
+        raise FetchError('url_scope', _('Адрес выходит за пределы плана'), retryable=False)
+    opener = urlrequest.build_opener(_LimitedRedirect(url_allowed))
     req = urlrequest.Request(
         url,
         headers={'User-Agent': 'ERGO-SCOUT/0.1', 'Accept': 'text/html,application/xhtml+xml'},
