@@ -1,6 +1,7 @@
 """Нормализация адреса для обхода. Длинный URL не становится ключом задачи."""
 
 import hashlib
+import ipaddress
 from urllib.parse import unquote_plus, urljoin, urlparse, urlunparse
 
 _SKIP_SUFFIXES = {
@@ -15,6 +16,27 @@ def url_key(normalized: str) -> str:
     return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
 
 
+def canonical_host(value: str) -> str | None:
+    """Один вид имени для семян, списка хостов и редиректа: punycode или сжатый IPv6."""
+    host = (value or '').strip().lower().rstrip('.')
+    if host.startswith('[') and host.endswith(']'):
+        host = host[1:-1]
+    if not host or any(label == '' for label in host.split('.')):
+        return None
+    if ':' in host:
+        try:
+            return ipaddress.IPv6Address(host).compressed
+        except ValueError:
+            return None
+    try:
+        encoded = host.encode('idna').decode('ascii')
+    except UnicodeError:
+        return None
+    if not encoded or any(label == '' for label in encoded.split('.')):
+        return None
+    return encoded
+
+
 def resolve_url(href: str, base: str, drop_query) -> tuple[str | None, str]:
     raw = (href or '').strip()
     if not raw or raw.startswith('#'):
@@ -26,17 +48,17 @@ def resolve_url(href: str, base: str, drop_query) -> tuple[str | None, str]:
         absolute = urljoin(base or '', raw)
         parts = urlparse(absolute)
         port = parts.port
-        host = (parts.hostname or '').lower()
+        host = canonical_host(parts.hostname or '')
     except ValueError:
         return None, 'invalid_url'
     if parts.scheme not in ('http', 'https') or not parts.hostname:
         return None, 'scheme'
+    if host is None:
+        return None, 'invalid_url'
     if parts.username or parts.password:
         return None, 'credentials'
-    try:
-        host = f'[{host}]' if ':' in host else host.encode('idna').decode('ascii')
-    except UnicodeError:
-        return None, 'invalid_url'
+    if ':' in host:
+        host = f'[{host}]'
     if port and not (
         (parts.scheme == 'http' and port == 80)
         or (parts.scheme == 'https' and port == 443)
@@ -59,9 +81,9 @@ def resolve_url(href: str, base: str, drop_query) -> tuple[str | None, str]:
 
 
 def host_allowed(url: str, allowed_hosts) -> bool:
-    host = (urlparse(url).hostname or '').lower()
-    allowed = [item.lower() for item in allowed_hosts or [] if item]
-    if not allowed:
+    host = canonical_host(urlparse(url).hostname or '')
+    allowed = [item for item in (canonical_host(raw) for raw in (allowed_hosts or [])) if item]
+    if host is None or not allowed:
         return False
     return any(host == item or host.endswith(f'.{item}') for item in allowed)
 

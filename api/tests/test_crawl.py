@@ -34,6 +34,21 @@ def _site(port_holder):
                 self.send_header('Location', f'http://{host}/quiet')
                 self.end_headers()
                 return
+            if path == '/redir':
+                self.send_response(302)
+                self.send_header('Location', f'http://{host}/land')
+                self.end_headers()
+                return
+            if path == '/chain':
+                self.send_response(302)
+                self.send_header('Location', f'http://{host}/chain-mid')
+                self.end_headers()
+                return
+            if path == '/chain-mid':
+                self.send_response(302)
+                self.send_header('Location', f'http://{host}/chain-land')
+                self.end_headers()
+                return
             if path == '/flaky':
                 Handler.hits['/flaky'] += 1
                 if Handler.hits['/flaky'] == 1:
@@ -74,6 +89,30 @@ def _body(path, host):
         return '<html><body><h1>Page2</h1><a href="/item?id=9">id</a></body></html>'
     if path.startswith('/quiet'):
         return '<html><body><h1>Quiet</h1></body></html>'
+    if path.startswith('/hop'):
+        return '<html><body><h1>Hop</h1><a href="/redir">r</a></body></html>'
+    if path.startswith('/land'):
+        return '<html><body><h1>Land</h1><a href="/next">n</a></body></html>'
+    if path.startswith('/next'):
+        return '<html><body><h1>Next</h1></body></html>'
+    if path.startswith('/chain-start'):
+        return '<html><body><h1>Chain</h1><a href="/chain">c</a></body></html>'
+    if path.startswith('/chain-land'):
+        return '<html><body><h1>ChainLand</h1><a href="/chain-next">n</a></body></html>'
+    if path.startswith('/chain-next'):
+        return '<html><body><h1>ChainNext</h1></body></html>'
+    if path.startswith('/diamond'):
+        return '<html><body><h1>Diamond</h1><a href="/long">l</a><a href="/short">s</a></body></html>'
+    if path.startswith('/long'):
+        return '<html><body><h1>Long</h1><a href="/dmid">m</a></body></html>'
+    if path.startswith('/dmid'):
+        return '<html><body><h1>Mid</h1><a href="/target">t</a></body></html>'
+    if path.startswith('/short'):
+        return '<html><body><h1>Short</h1><a href="/target">t</a></body></html>'
+    if path.startswith('/target'):
+        return '<html><body><h1>Target</h1><a href="/leaf">f</a></body></html>'
+    if path.startswith('/leaf'):
+        return '<html><body><h1>Leaf</h1></body></html>'
     return '<html><body><h1>Other</h1></body></html>'
 
 
@@ -119,6 +158,14 @@ class CrawlTests(TestCase):
         run = start_run(run=run)
         publish_ready(str(run.public_id))
         run.refresh_from_db()
+        return run
+
+    def _open(self, path, **crawl):
+        run = self._crawl(path, **crawl)
+        run.status = RUN_RUNNING
+        run.finished_at = None
+        run.stop_reason = ''
+        run.save(update_fields=['status', 'finished_at', 'stop_reason'])
         return run
 
     def test_cycle_fragment_and_outside_host_do_not_duplicate(self):
@@ -335,10 +382,126 @@ class CrawlTests(TestCase):
         self.assertFalse(run.crawl_urls.filter(state__in=('queued', 'active')).exists())
 
     def test_byte_budget_applies_to_already_queued_fetches(self):
-        run = self._crawl('/wide', max_total_bytes=400)
+        run = self._crawl('/wide', max_total_bytes=400, max_pages=30)
         self.assertEqual(run.status, RUN_COMPLETED)
         self.assertEqual(run.stop_reason, 'bytes')
         self.assertLessEqual(sum(run.snapshots.values_list('byte_size', flat=True)), 400)
+
+    def test_redirect_keeps_the_depth_of_the_page_that_found_it(self):
+        run = self._crawl('/hop', max_depth=1, max_pages=10)
+        self.assertEqual(run.status, RUN_COMPLETED)
+        redir = run.crawl_urls.get(normalized_url=f'{self.origin}/redir')
+        land = run.crawl_urls.get(normalized_url=f'{self.origin}/land')
+        nxt = run.crawl_urls.get(normalized_url=f'{self.origin}/next')
+        self.assertEqual(redir.depth, 1)
+        self.assertEqual(land.depth, 1)
+        self.assertEqual(land.skip_reason, 'redirect')
+        self.assertEqual(nxt.depth, 2)
+        self.assertEqual(nxt.state, 'skipped')
+        self.assertEqual(nxt.skip_reason, 'depth')
+        self.assertEqual(Task.objects.filter(run=run, kind='fetch', status='succeeded').count(), 2)
+        self.assertFalse(run.snapshots.filter(source_url=f'{self.origin}/next').exists())
+
+    def test_redirect_chain_does_not_open_the_next_level(self):
+        run = self._crawl('/chain-start', max_depth=1, max_pages=10)
+        self.assertEqual(run.status, RUN_COMPLETED)
+        land = run.crawl_urls.get(normalized_url=f'{self.origin}/chain-land')
+        nxt = run.crawl_urls.get(normalized_url=f'{self.origin}/chain-next')
+        self.assertEqual(land.depth, 1)
+        self.assertEqual(land.skip_reason, 'redirect')
+        self.assertEqual(nxt.depth, 2)
+        self.assertEqual(nxt.skip_reason, 'depth')
+        self.assertEqual(Task.objects.filter(run=run, kind='fetch', status='succeeded').count(), 2)
+        self.assertFalse(run.snapshots.filter(source_url=f'{self.origin}/chain-next').exists())
+
+    def test_shorter_path_requeues_a_url_skipped_for_depth(self):
+        run = self._open('/quiet', max_depth=2, max_pages=10)
+        deep = remember(run, f'{self.origin}/later', base=self.origin, depth=3, parent=None)
+        shallow = remember(run, f'{self.origin}/later', base=self.origin, depth=2, parent=None)
+        shallow.refresh_from_db()
+        self.assertEqual(shallow.pk, deep.pk)
+        self.assertEqual(shallow.depth, 2)
+        self.assertEqual(shallow.state, 'active')
+        self.assertEqual(shallow.skip_reason, '')
+        self.assertEqual(Task.objects.filter(run=run, idempotency_key=f'fetch:{deep.url_key}').count(), 1)
+
+    def test_longer_path_does_not_duplicate_a_url(self):
+        run = self._open('/quiet', max_depth=2, max_pages=10)
+        first = remember(run, f'{self.origin}/later', base=self.origin, depth=2, parent=None)
+        second = remember(run, f'{self.origin}/later', base=self.origin, depth=3, parent=None)
+        second.refresh_from_db()
+        self.assertEqual(second.pk, first.pk)
+        self.assertEqual(second.depth, 2)
+        self.assertEqual(Task.objects.filter(run=run, idempotency_key=f'fetch:{first.url_key}').count(), 1)
+        self.assertEqual(run.snapshots.filter(source_url=f'{self.origin}/later').count(), 0)
+
+    def test_shallower_path_reopens_links_of_a_parsed_page(self):
+        from modules.scout.api.models import PageSnapshot
+        from modules.scout.api.services.snapshot_store import store_snapshot_bytes
+        from modules.scout.api.services.url_norm import url_key
+
+        run = self._open('/quiet', max_depth=3, max_pages=10)
+        target = f'{self.origin}/target'
+        leaf = f'{self.origin}/leaf'
+        body = f'<html><body><h1>Target</h1><a href="/leaf">leaf</a></body></html>'.encode()
+        digest, relative = store_snapshot_bytes(body)
+        snapshot = PageSnapshot.objects.create(
+            run=run,
+            source_url=target,
+            final_url=target,
+            http_status=200,
+            content_hash=digest,
+            content_path=relative,
+            byte_size=len(body),
+            content_type='text/html; charset=utf-8',
+            charset='utf-8',
+        )
+        CrawlURL.objects.create(
+            run=run,
+            original_url=target,
+            normalized_url=target,
+            url_key=url_key(target),
+            depth=3,
+            state='done',
+            snapshot=snapshot,
+        )
+        CrawlURL.objects.create(
+            run=run,
+            original_url=leaf,
+            normalized_url=leaf,
+            url_key=url_key(leaf),
+            depth=4,
+            state='skipped',
+            skip_reason='depth',
+        )
+        remember(run, target, base=self.origin, depth=2, parent=None)
+        leaf_row = run.crawl_urls.get(normalized_url=leaf)
+        self.assertEqual(run.crawl_urls.get(normalized_url=target).depth, 2)
+        self.assertEqual(leaf_row.depth, 3)
+        self.assertEqual(leaf_row.state, 'active')
+        self.assertEqual(Task.objects.filter(run=run, idempotency_key=f'fetch:{leaf_row.url_key}').count(), 1)
+        self.assertEqual(run.snapshots.filter(source_url=target).count(), 1)
+        self.assertEqual(run.records.filter(snapshot=snapshot).count(), 0)
+
+    def test_rejected_urls_stay_rejected_when_a_shorter_path_appears(self):
+        run = self._open('/quiet', max_depth=2, max_pages=1)
+        foreign = remember(run, 'http://evil.test/no', base=self.origin, depth=1, parent=None)
+        again = remember(run, 'http://evil.test/no', base=self.origin, depth=0, parent=None)
+        self.assertEqual(again.state, 'skipped')
+        self.assertEqual(again.skip_reason, 'host')
+        self.assertFalse(Task.objects.filter(run=run, idempotency_key=f'fetch:{foreign.url_key}').exists())
+        failed = remember(run, f'{self.origin}/gone', base=self.origin, depth=3, parent=None)
+        failed.state = 'failed'
+        failed.skip_reason = ''
+        failed.save(update_fields=['state', 'skip_reason'])
+        kept = remember(run, f'{self.origin}/gone', base=self.origin, depth=1, parent=None)
+        self.assertEqual(kept.state, 'failed')
+        self.assertEqual(kept.depth, 3)
+        blocked = remember(run, f'{self.origin}/later', base=self.origin, depth=4, parent=None)
+        revived = remember(run, f'{self.origin}/later', base=self.origin, depth=1, parent=None)
+        revived.refresh_from_db()
+        self.assertEqual(revived.state, 'skipped')
+        self.assertFalse(Task.objects.filter(run=run, idempotency_key=f'fetch:{blocked.url_key}').exists())
 
     def test_redirect_cannot_escape_allowed_host(self):
         from modules.scout.api.services.http_fetch import fetch_html

@@ -10,7 +10,7 @@ from django.utils.translation import gettext as _
 
 from .constants import CRAWL_LIMITS, DEFAULT_LIMITS, DROP_QUERY
 from .errors import ScoutError
-from .url_norm import resolve_url, host_allowed
+from .url_norm import canonical_host, resolve_url, host_allowed
 
 _NAME = re.compile(r'^[a-z][a-z0-9_]{0,40}$')
 _KINDS = {'css', 'xpath'}
@@ -109,15 +109,21 @@ def _clean_crawl(crawl, seed_urls) -> dict:
         raise ScoutError('invalid', _('Режим обхода: pages или site'))
     hosts = []
     for item in raw.get('allowed_hosts') or []:
-        host = str(item or '').strip().lower()
-        if host and host not in hosts:
+        text = str(item or '').strip()
+        if not text:
+            continue
+        host = canonical_host(text)
+        if host is None:
+            raise ScoutError('invalid', _('Имя сайта задано неверно'))
+        if host not in hosts:
             hosts.append(host)
     if mode == 'site' and not hosts:
-        hosts = sorted({
-            (urlparse(url).hostname or '').lower()
-            for url in seed_urls
-            if urlparse(url).hostname
-        })
+        found = []
+        for url in seed_urls:
+            host = canonical_host(urlparse(url).hostname or '')
+            if host and host not in found:
+                found.append(host)
+        hosts = sorted(found)
     result = {
         'mode': mode,
         'allowed_hosts': hosts,

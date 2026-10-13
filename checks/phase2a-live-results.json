@@ -1,0 +1,1557 @@
+[
+  {
+    "case": "cycle_duplicate",
+    "run": "d5c7c322-38b9-4516-86d4-fc2bd8188d6d",
+    "job": "7c88321d-9d2c-4c5c-9760-3dca91c5f947",
+    "status": "completed",
+    "snapshots": 3,
+    "records": 3,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "2b1a5507-b266-4bd9-9b8c-f44b7696a867",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "0a0a61f0-064d-4198-bec9-55cc6ff17d66",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "50df77be-f918-457f-ae63-16e215fbcf0e",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "f44c16b7-619e-4f6a-857e-fd5be83abb88",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "a4b9c5f0-767e-4bb4-8418-47d23809bb02",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "6bb6a654-7913-4cd6-b51a-daffb2ca29e1",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "4175cf30-355a-40d3-b7fd-31a7810ee4fa",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "bf091229-8898-450c-96f5-d17a2ff42e00",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "31b7bf37-992c-4424-810d-df9cbbc10f29",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/cycle/a",
+          "normalized": "/cycle/a"
+        }
+      },
+      {
+        "title": {
+          "raw": "/cycle/b",
+          "normalized": "/cycle/b"
+        }
+      },
+      {
+        "title": {
+          "raw": "/cycle/c",
+          "normalized": "/cycle/c"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/cycle/a",
+      "http://127.0.0.1:8767/cycle/b",
+      "http://127.0.0.1:8767/cycle/c"
+    ],
+    "hits": {
+      "/cycle/a": 1,
+      "/cycle/b": 1,
+      "/cycle/c": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "base_query",
+    "run": "9a7149fd-1f38-4e30-a4ff-e08f2b3fced1",
+    "job": "d39f658a-6544-430b-af7b-9aae29af19d0",
+    "status": "completed",
+    "snapshots": 2,
+    "records": 2,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "28632f46-785c-40f2-a5fc-f1772f255fde",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "36a7e2fe-a897-4851-bdee-5eae2c23ed9d",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "ad451a79-c6d2-4e5f-9a34-21ffe5709dda",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "94ab2fcf-9890-4404-9b04-07e29cad1ebb",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "af98903f-6bf6-45cb-ae38-83849669520d",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "bf2e1a09-4972-4bd0-89a4-087865e4f73a",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/base",
+          "normalized": "/base"
+        }
+      },
+      {
+        "title": {
+          "raw": "/items/one?id=9&page=2&id=10",
+          "normalized": "/items/one?id=9&page=2&id=10"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/base",
+      "http://127.0.0.1:8767/items/one?id=9&page=2&id=10"
+    ],
+    "hits": {
+      "/base": 1,
+      "/items/one?id=9&page=2&id=10": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "frontier_cap",
+    "run": "ef05baf2-f89b-4ffc-8ef5-8b005f443607",
+    "job": "3c1da76e-a51d-43ee-95c7-6dfd0f73195e",
+    "status": "completed",
+    "snapshots": 1,
+    "records": 1,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 1,
+      "skipped": 2,
+      "failed": 0
+    },
+    "stop_reason": "frontier",
+    "tasks": [
+      {
+        "public_id": "5c36cea9-5d38-4da8-9393-865fa56f6739",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "b345eeb3-e321-4933-a8c0-117dca12d303",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "052707ff-23d5-427d-b332-bf071ffafb5b",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/storm",
+          "normalized": "/storm"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/storm"
+    ],
+    "hits": {
+      "/storm": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "depth",
+    "run": "d7d3aa25-774e-4417-81da-fbaec375958a",
+    "job": "fd6d6a10-6722-4ffc-b125-548da9adb04d",
+    "status": "completed",
+    "snapshots": 2,
+    "records": 2,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 2,
+      "skipped": 1,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "89cc2e7d-8c0a-4a4c-9757-88743d073bb1",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "90e9ed96-f15d-4425-8ba7-b53df99dfe81",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "cca8c53d-e51b-478f-bb42-423b78b9725a",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "260664b0-49e2-405d-beb8-8b3ea9c3b8a9",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "3eb81079-a58b-4a62-a147-04d14bd07999",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "64c55a30-269f-4b06-89bb-a814f332a347",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/depth/0",
+          "normalized": "/depth/0"
+        }
+      },
+      {
+        "title": {
+          "raw": "/depth/1",
+          "normalized": "/depth/1"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/depth/0",
+      "http://127.0.0.1:8767/depth/1"
+    ],
+    "hits": {
+      "/depth/0": 1,
+      "/depth/1": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "max_pages",
+    "run": "393dd520-5fbf-414d-814c-e0e503f9b677",
+    "job": "9761da51-fe43-47c5-a92d-3a78c21dcd94",
+    "status": "completed",
+    "snapshots": 3,
+    "records": 3,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 3,
+      "skipped": 8,
+      "failed": 0
+    },
+    "stop_reason": "max_pages",
+    "tasks": [
+      {
+        "public_id": "95d835cf-6ee4-47b5-b6ca-6f79cef7a6c4",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "da9c426c-177f-448d-8647-f62ee5155c78",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "f1532465-7fa8-414e-b365-c10c3da787de",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "188caa1e-b7c7-4dfb-af47-a7896743a3a9",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "fda9b050-f75f-4118-9c6d-abfd178a2d47",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "f1858e7b-167f-46b8-8f38-bf06c09f919c",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "40ac7ac3-f39e-4630-a874-5e262dec57cf",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "198525bf-a228-40fa-9a5f-d00c72644db9",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "baf504fb-8e7c-4c79-8f79-27dbab8016b0",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/wide",
+          "normalized": "/wide"
+        }
+      },
+      {
+        "title": {
+          "raw": "/wide/0",
+          "normalized": "/wide/0"
+        }
+      },
+      {
+        "title": {
+          "raw": "/wide/1",
+          "normalized": "/wide/1"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/wide",
+      "http://127.0.0.1:8767/wide/0",
+      "http://127.0.0.1:8767/wide/1"
+    ],
+    "hits": {
+      "/wide": 1,
+      "/wide/0": 1,
+      "/wide/1": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "max_bytes",
+    "run": "9f6c532a-07a8-41b7-a0d2-239e567bb1db",
+    "job": "ac842a9c-14a8-4c7d-a37b-296174dd3a11",
+    "status": "completed",
+    "snapshots": 4,
+    "records": 4,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 4,
+      "skipped": 7,
+      "failed": 0
+    },
+    "stop_reason": "bytes",
+    "tasks": [
+      {
+        "public_id": "8374c227-a784-4933-98ff-60ef35513cd7",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "9ce46219-529c-4314-8a9c-9962e188a799",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "7c9f93d0-32f2-432d-b9a9-e526d7e72f6f",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "1cd605b7-404c-4786-b192-75030ad1de8e",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "fecbdef2-0c70-4894-bc48-863ad898179a",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "too_large",
+        "error_message": "Страница больше допустимого размера"
+      },
+      {
+        "public_id": "90ca78c0-071e-4409-a49d-630560c3c06e",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "ec0a1cf4-d1e3-4290-9436-8b631dc83deb",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "ba01f87a-a061-4701-a5fe-66c65f09b9ad",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "fc93b5ee-1388-45cc-8c5d-40f65801303f",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "ac337959-36ef-419a-be6d-57a1aa3b2178",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "bc08d19b-2c3f-43ed-954d-a4c6003d0e33",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "2cb175c4-5810-45a6-992a-b5696119b309",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "2f93d6cb-b949-4385-b759-2a0ef591a619",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "13a95184-0327-4b66-b2f5-03d3696b9203",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "722dedbe-2a78-46cd-9534-186b364066c4",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "03e5424d-b53c-45cd-97e2-99a1093fdb47",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "47c51e7f-9331-41e4-b4ae-59ee13d561ef",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "355414c2-7136-4a9b-b573-85a6bc58475c",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "8dd8226b-1a2a-40d9-9f2e-f11680c21e35",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/wide",
+          "normalized": "/wide"
+        }
+      },
+      {
+        "title": {
+          "raw": "/wide/0",
+          "normalized": "/wide/0"
+        }
+      },
+      {
+        "title": {
+          "raw": "/wide/1",
+          "normalized": "/wide/1"
+        }
+      },
+      {
+        "title": {
+          "raw": "/wide/3",
+          "normalized": "/wide/3"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/wide",
+      "http://127.0.0.1:8767/wide/0",
+      "http://127.0.0.1:8767/wide/1",
+      "http://127.0.0.1:8767/wide/3"
+    ],
+    "hits": {
+      "/wide": 1,
+      "/wide/0": 1,
+      "/wide/1": 1,
+      "/wide/3": 1,
+      "/wide/4": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "max_seconds",
+    "run": "e9180472-3890-4d52-8af0-d4ffb2036de1",
+    "job": "6b3d6ad8-b47f-4ae8-bea0-cec275933605",
+    "status": "completed",
+    "snapshots": 1,
+    "records": 1,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 1,
+      "skipped": 1,
+      "failed": 0
+    },
+    "stop_reason": "time",
+    "tasks": [
+      {
+        "public_id": "5e9045b5-7ca3-4aa1-9ab6-3a29ad0a5b3b",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "9f49cc71-df46-46f4-96f4-7e2967d5c89d",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "251f38c9-a7d6-4000-928e-da0d5d2b4c24",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "442ad057-4643-4026-8c80-61bcc328658d",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/slow/start",
+          "normalized": "/slow/start"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/slow/start"
+    ],
+    "hits": {
+      "/slow/start": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "catalog_detail_preview",
+    "run": "3a622857-81f9-484f-8694-bfc3fcbbe144",
+    "job": "e91e082f-f0d8-48fb-a6e8-aef06790d605",
+    "status": "completed",
+    "snapshots": 3,
+    "records": 2,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "4f2c086b-5f20-4049-855f-68b780baa8c4",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "c0cf3396-e598-453a-a9ef-075b1d53f437",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "f27394f3-7ff1-4ebe-b045-1e93799f0c38",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "34014206-2dc9-4d74-89b2-4fab3879dfbc",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "c09814b4-79b7-4282-818c-6ee677f1081b",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "3a7ed787-d98a-4a55-8a2f-a582038aeeae",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "02a11131-08b2-463b-91a7-39874019cc80",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "ee578988-9df5-4e65-abfb-8aa2e8e0a7f2",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/details/1",
+          "normalized": "/details/1"
+        }
+      },
+      {
+        "title": {
+          "raw": "/details/2",
+          "normalized": "/details/2"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/details/1",
+      "http://127.0.0.1:8767/details/2"
+    ],
+    "hits": {
+      "/details/1": 1,
+      "/catalog": 1,
+      "/details/2": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "redirect_scope_blocked",
+    "run": "97193aa3-1750-4780-b667-0f43b0f4641a",
+    "job": "2a2f1812-216a-421e-9691-c991aefa4a16",
+    "status": "failed",
+    "snapshots": 0,
+    "records": 0,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 0,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "eaab9c33-b5b4-4fe0-8a7f-ca6d4fc0d485",
+        "kind": "fetch",
+        "status": "failed",
+        "error_code": "redirect_scope",
+        "error_message": "Переадресация выходит за пределы плана"
+      }
+    ],
+    "values": [],
+    "evidence_urls": [],
+    "hits": {
+      "/redirect/out": 1
+    },
+    "checks": {}
+  },
+  {
+    "case": "redirect_depth",
+    "run": "827590ed-55c0-4003-a720-835849c9c32f",
+    "job": "a5a5abe9-4db5-4ff3-9f08-a49122fbe93e",
+    "status": "completed",
+    "snapshots": 2,
+    "records": 2,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 3,
+      "skipped": 1,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "8b92acb2-d4b8-4a84-ab5b-42e913450c75",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "63683811-8edc-48d4-9ae5-b5b8e37e02ac",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "94470223-110e-4f47-95bd-3fb78295cb56",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "49f73886-6640-47ad-8834-2531e9248e06",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "904205a1-68da-4986-acb0-ce6e99179f80",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "bb441b0c-8e12-49d2-bafb-96345071d9db",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/hop",
+          "normalized": "/hop"
+        }
+      },
+      {
+        "title": {
+          "raw": "/land",
+          "normalized": "/land"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/hop",
+      "http://127.0.0.1:8767/redir"
+    ],
+    "hits": {
+      "/hop": 1,
+      "/redir": 1,
+      "/land": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "redirect_chain",
+    "run": "87734668-4c49-4fe3-a11a-a25af31ca211",
+    "job": "d5e6fb4c-f1bc-42c6-9e19-683af9015f7d",
+    "status": "completed",
+    "snapshots": 2,
+    "records": 2,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 3,
+      "skipped": 1,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "f99a9712-4745-489a-bae5-c16b495a1ff1",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "78be44df-fd24-4229-9ea1-231b0fc38baf",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "129c305e-d1da-4d5a-b8c0-24c678ac7d52",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "baaf1a5b-2eb8-4c38-830f-619b49f54257",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "e7e14c9f-46b6-4585-82d8-b03a60e11ee4",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "0d1e8c42-50f4-4e9b-9748-72c0c6498d7e",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/chain-start",
+          "normalized": "/chain-start"
+        }
+      },
+      {
+        "title": {
+          "raw": "/chain-land",
+          "normalized": "/chain-land"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/chain",
+      "http://127.0.0.1:8767/chain-start"
+    ],
+    "hits": {
+      "/chain-start": 1,
+      "/chain": 1,
+      "/chain-mid": 1,
+      "/chain-land": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "shorter_path",
+    "run": "1c4c7ac8-f24a-4212-b33d-2f6a88f45177",
+    "job": "2061f46e-fa31-47c5-bcc8-507038796431",
+    "status": "completed",
+    "snapshots": 6,
+    "records": 6,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "bbd7861d-b2e4-4982-8adc-77f4ba793dd3",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "b6b14167-0bd9-47eb-aa6d-ff0c8585c1cd",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "03c167e7-765a-4c26-91f0-006973bc9616",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "727eb28d-549d-4ef9-a636-d50414c9bbf0",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "56d4efeb-7a82-4c51-8915-fefad17b83d5",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "4336e881-24dc-4935-bba5-999bca6e72be",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "6a62362b-6e1b-48f8-bcc9-a63cd25c2287",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "c174d481-b5d0-4368-9d99-ac874a5da0c8",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "0fa4f33c-9413-448a-8cde-ebb60779b682",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "425b4970-9fe1-4ef2-9b03-944f88275680",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "9bcaee6c-c356-4638-bea2-fcce088bba10",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "02698157-73df-44bc-861a-cc6d744c5371",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "12ccf302-9c37-40fb-bfaf-8514ce2ec073",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "86403fb1-f580-4961-a72f-5196715006fc",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "9cbce675-2bc2-4669-8822-d358e51f705a",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "806c2424-c04e-485f-a91a-6609b894fbee",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "afcc9761-207e-4d96-b86a-7e2bc1978097",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "c66470fb-c898-4e13-a1f5-da1e3a6396a0",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/diamond",
+          "normalized": "/diamond"
+        }
+      },
+      {
+        "title": {
+          "raw": "/long",
+          "normalized": "/long"
+        }
+      },
+      {
+        "title": {
+          "raw": "/short",
+          "normalized": "/short"
+        }
+      },
+      {
+        "title": {
+          "raw": "/dmid",
+          "normalized": "/dmid"
+        }
+      },
+      {
+        "title": {
+          "raw": "/target",
+          "normalized": "/target"
+        }
+      },
+      {
+        "title": {
+          "raw": "/leaf",
+          "normalized": "/leaf"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/diamond",
+      "http://127.0.0.1:8767/dmid",
+      "http://127.0.0.1:8767/leaf",
+      "http://127.0.0.1:8767/long",
+      "http://127.0.0.1:8767/short",
+      "http://127.0.0.1:8767/target"
+    ],
+    "hits": {
+      "/diamond": 1,
+      "/long": 1,
+      "/short": 1,
+      "/dmid": 1,
+      "/target": 1,
+      "/leaf": 1
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "retry_503",
+    "run": "438c97b5-136d-4acc-8d3a-6c0a9403f6ff",
+    "job": "fd2c0fc3-d934-44a3-b633-3943029ec40e",
+    "status": "completed",
+    "snapshots": 1,
+    "records": 1,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 0,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "985e0e3b-081d-4bee-bcc9-74c3bb20346c",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "003cfc67-e81d-40c5-a502-60b301fcd7c1",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/retry/503",
+          "normalized": "/retry/503"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/retry/503"
+    ],
+    "hits": {
+      "/retry/503": 2
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "retry_429",
+    "run": "ae18dc14-382e-44f9-b95a-23d089d42b1f",
+    "job": "faa76153-98e6-40c7-98ba-5ad628939bc2",
+    "status": "completed",
+    "snapshots": 1,
+    "records": 1,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 0,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "0c019047-58f1-4be1-94ad-44fb6f618bec",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "e0815a16-fd25-4700-83bb-383863fa4a98",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/retry/429",
+          "normalized": "/retry/429"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/retry/429"
+    ],
+    "hits": {
+      "/retry/429": 2
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "retry_timeout",
+    "run": "e88a52a8-af39-449e-9880-d3968f17119e",
+    "job": "5b3f3eb5-ee3c-4f5a-b6a8-5017d666dacf",
+    "status": "completed",
+    "snapshots": 1,
+    "records": 1,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 0,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "67018038-d217-4295-96b5-7b3312baa040",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "09664f22-dd97-4dd6-9fe5-ff318c4cbc26",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/retry/timeout",
+          "normalized": "/retry/timeout"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/retry/timeout"
+    ],
+    "hits": {
+      "/retry/timeout": 2
+    },
+    "checks": {
+      "start_without_approval": 409,
+      "preview_fetch_only": true
+    }
+  },
+  {
+    "case": "pause_inflight_resume",
+    "run": "d0f1cbc6-6d13-42ee-a14c-0d74910e810d",
+    "job": "8e3557ce-5c59-4947-857e-716245821ff8",
+    "status": "completed",
+    "snapshots": 3,
+    "records": 3,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "d12ff5ac-8259-4304-a06e-d8d2e5de2b01",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "c39499ae-543e-4da4-8444-08c01958bd6c",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "aafa8035-e6f0-457f-9b97-40739d5037d8",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "d28c6cc6-131d-4546-aec7-6d5ab01ff651",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "51d3bc27-8267-4035-a174-5e907bb93979",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "9c394729-93d2-4476-b143-1a8429473be8",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "d3075336-c833-41ff-a442-815a95bed030",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "4f789221-208e-4537-b14d-4d44bda092c3",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "08dce91a-d589-4ab9-ade6-ef9120117c30",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/slow/start",
+          "normalized": "/slow/start"
+        }
+      },
+      {
+        "title": {
+          "raw": "/slow/child",
+          "normalized": "/slow/child"
+        }
+      },
+      {
+        "title": {
+          "raw": "/slow/grandchild",
+          "normalized": "/slow/grandchild"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/slow/child",
+      "http://127.0.0.1:8767/slow/grandchild",
+      "http://127.0.0.1:8767/slow/start"
+    ],
+    "hits": {
+      "/slow/start": 1,
+      "/slow/child": 1,
+      "/slow/grandchild": 1
+    },
+    "checks": {
+      "transition": "pausing",
+      "paused": "paused"
+    }
+  },
+  {
+    "case": "cancel_inflight",
+    "run": "00be311b-af78-4dfc-ad1a-270d4cae7663",
+    "job": "8871e384-6d26-4cdf-9299-d90bde32c33a",
+    "status": "cancelled",
+    "snapshots": 1,
+    "records": 1,
+    "frontier": {
+      "queued": 0,
+      "active": 0,
+      "done": 1,
+      "skipped": 1,
+      "failed": 0
+    },
+    "stop_reason": "",
+    "tasks": [
+      {
+        "public_id": "d2304d22-d49d-4ac5-9298-00bc55fd36d5",
+        "kind": "fetch",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "3b9a8b2e-7412-4716-9724-2cd7a42f7e3a",
+        "kind": "fetch",
+        "status": "cancelled",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "86b693cc-a551-47ae-aec5-715e1787860c",
+        "kind": "crawl",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      },
+      {
+        "public_id": "1771d53e-1fce-422e-8b79-8fa96c15d5e4",
+        "kind": "extract",
+        "status": "succeeded",
+        "error_code": "",
+        "error_message": ""
+      }
+    ],
+    "values": [
+      {
+        "title": {
+          "raw": "/slow/start",
+          "normalized": "/slow/start"
+        }
+      }
+    ],
+    "evidence_urls": [
+      "http://127.0.0.1:8767/slow/start"
+    ],
+    "hits": {
+      "/slow/start": 1,
+      "/slow/child": 1
+    },
+    "checks": {
+      "transition": "cancelling"
+    }
+  }
+]

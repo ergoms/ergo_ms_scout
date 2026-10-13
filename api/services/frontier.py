@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 
 from ..models import CrawlURL, PageSnapshot, Run, Task
@@ -18,6 +19,7 @@ from .constants import (
     TASK_EXTRACT,
     TASK_FETCH,
     TASK_PENDING,
+    TASK_RETRY_WAIT,
 )
 from .page_links import iter_hrefs
 from .url_norm import host_allowed, resolve_url, rules_match, url_key
@@ -54,7 +56,11 @@ def discover(run: Run, snapshot: PageSnapshot, body: bytes) -> None:
         return
     if run.status not in (RUN_RUNNING, RUN_PAUSING):
         return
-    parent = CrawlURL.objects.filter(run=run, snapshot=snapshot).order_by('depth').first()
+    linked = CrawlURL.objects.filter(run=run, snapshot=snapshot)
+    # Алиас редиректа — тот же документ. Его глубина не должна заменять глубину адреса, с которого пришли.
+    parent = linked.exclude(skip_reason='redirect').order_by('depth', 'pk').first()
+    if parent is None:
+        parent = linked.order_by('depth', 'pk').first()
     depth = 0 if parent is None else parent.depth + 1
     page = snapshot.final_url or snapshot.source_url
     hrefs, base = iter_hrefs(body, snapshot.content_type, snapshot.charset, page)
@@ -79,7 +85,7 @@ def remember(run: Run, raw_url: str, *, base: str, depth: int, parent) -> CrawlU
     key = url_key(normalized)
     existing = CrawlURL.objects.filter(run=run, url_key=key).first()
     if existing is not None:
-        return existing
+        return _revisit(run, existing, depth, parent, crawl, normalized)
     if CrawlURL.objects.filter(run=run).count() >= int(crawl.get('frontier_cap') or 1):
         _stop(run, 'frontier')
         return None
@@ -100,20 +106,83 @@ def remember(run: Run, raw_url: str, *, base: str, depth: int, parent) -> CrawlU
         parent=parent,
         state=CRAWL_QUEUED,
     )
-    snapshot = PageSnapshot.objects.filter(run=run, source_url=normalized).first()
+    _attach_or_fetch(run, row)
+    return CrawlURL.objects.get(pk=row.pk)
+
+
+def _revisit(run: Run, existing: CrawlURL, depth: int, parent, crawl: dict, normalized: str) -> CrawlURL:
+    """Короткий путь уменьшает глубину. Пропуск из-за глубины можно вернуть, остальные пропуски — нет."""
+    enqueue = False
+    spread = False
+    with transaction.atomic():
+        row = CrawlURL.objects.select_for_update().get(pk=existing.pk)
+        if depth >= row.depth:
+            return row
+        if row.state == CRAWL_FAILED or (row.state == CRAWL_SKIPPED and row.skip_reason != 'depth'):
+            return row
+        row.depth = depth
+        row.parent = parent
+        fields = ['depth', 'parent']
+        if row.state == CRAWL_SKIPPED:
+            reason = _admit(run, crawl, normalized, depth)
+            if reason is not None:
+                row.skip_reason = (reason or '')[:80]
+                row.save(update_fields=fields + ['skip_reason'])
+                return row
+            row.state = CRAWL_QUEUED
+            row.skip_reason = ''
+            row.save(update_fields=fields + ['state', 'skip_reason'])
+            enqueue = True
+        else:
+            row.save(update_fields=fields)
+            spread = row.state == CRAWL_DONE and bool(row.snapshot_id)
+    if enqueue:
+        _attach_or_fetch(run, row)
+        row.refresh_from_db()
+    elif spread:
+        _spread(run, row)
+    return row
+
+
+def _admit(run: Run, crawl: dict, normalized: str, depth: int) -> str | None:
+    if depth > int(crawl.get('max_depth') or 0):
+        return 'depth'
+    if not host_allowed(normalized, crawl.get('allowed_hosts')):
+        return 'host'
+    if not rules_match(normalized, crawl.get('visit')):
+        return 'visit'
+    if _budget_closed(run, crawl):
+        return run.stop_reason or 'limit'
+    return None
+
+
+def _attach_or_fetch(run: Run, row: CrawlURL) -> None:
+    crawl = _config(run)
+    snapshot = PageSnapshot.objects.filter(run=run, source_url=row.normalized_url).first()
     if snapshot is not None:
         from .crawl_budget import snapshot_bytes
-        if snapshot_bytes(run) + snapshot.byte_size > crawl['max_total_bytes']:
+        if snapshot_bytes(run) + snapshot.byte_size > int(crawl.get('max_total_bytes') or 1):
             _stop(run, 'bytes')
             row.state = CRAWL_SKIPPED
             row.skip_reason = 'bytes'
             row.save(update_fields=['state', 'skip_reason'])
-            return row
+            return
         note_fetch(run, snapshot)
-        return CrawlURL.objects.get(pk=row.pk)
+        return
     if run.status == RUN_RUNNING:
         _schedule_fetch(run, row)
-    return row
+
+
+def _spread(run: Run, row: CrawlURL) -> None:
+    snapshot = row.snapshot
+    if snapshot is None or not snapshot.content_path:
+        return
+    from .snapshot_store import read_snapshot_bytes
+    try:
+        body = read_snapshot_bytes(snapshot.content_path)
+    except (OSError, ValueError):
+        return
+    discover(run, snapshot, body)
 
 
 def _budget_closed(run: Run, crawl: dict) -> bool:
@@ -197,6 +266,9 @@ def _alias_redirect(run: Run, snapshot: PageSnapshot) -> None:
     source, _ignored = resolve_url(snapshot.source_url, snapshot.source_url, drop)
     if not final or not source or url_key(final) == url_key(source):
         return
+    source_row = CrawlURL.objects.filter(run=run, url_key=url_key(source)).first()
+    # Редирект не начинает обход заново: конечный адрес получает глубину найденной страницы.
+    source_depth = 0 if source_row is None else source_row.depth
     key = url_key(final)
     row = CrawlURL.objects.filter(run=run, url_key=key).first()
     if row is None:
@@ -208,23 +280,42 @@ def _alias_redirect(run: Run, snapshot: PageSnapshot) -> None:
             original_url=final[:2000],
             normalized_url=final,
             url_key=key,
-            depth=0,
+            depth=source_depth,
             state=CRAWL_DONE,
             skip_reason='redirect',
             snapshot=snapshot,
         )
         return
-    task = Task.objects.filter(run=run, idempotency_key=f'fetch:{key}').first()
-    if row.state in (CRAWL_QUEUED, CRAWL_ACTIVE) and (task is None or task.status in (TASK_PENDING, 'retry_wait')):
+    depth = min(row.depth, source_depth)
+    lowered = depth < row.depth
+    if row.state in (CRAWL_QUEUED, CRAWL_ACTIVE):
+        task = Task.objects.filter(run=run, idempotency_key=f'fetch:{key}').first()
+        if task is None or task.status in (TASK_PENDING, TASK_RETRY_WAIT):
+            row.depth = depth
+            row.state = CRAWL_DONE
+            row.snapshot = snapshot
+            row.skip_reason = 'redirect'
+            row.save(update_fields=['depth', 'state', 'snapshot', 'skip_reason'])
+            Task.objects.filter(
+                run=run,
+                idempotency_key=f'fetch:{key}',
+                status__in=(TASK_PENDING, TASK_RETRY_WAIT),
+            ).update(status=TASK_CANCELLED)
+            return
+    max_depth = int(_config(run).get('max_depth') or 0)
+    if row.state == CRAWL_SKIPPED and row.skip_reason == 'depth' and depth <= max_depth:
+        row.depth = depth
         row.state = CRAWL_DONE
         row.snapshot = snapshot
         row.skip_reason = 'redirect'
-        row.save(update_fields=['state', 'snapshot', 'skip_reason'])
-        Task.objects.filter(
-            run=run,
-            idempotency_key=f'fetch:{key}',
-            status__in=(TASK_PENDING, 'retry_wait'),
-        ).update(status=TASK_CANCELLED)
+        row.save(update_fields=['depth', 'state', 'snapshot', 'skip_reason'])
+        return
+    if not lowered:
+        return
+    row.depth = depth
+    row.save(update_fields=['depth'])
+    if row.state == CRAWL_DONE and row.snapshot_id:
+        _spread(run, row)
 
 
 def _schedule_fetch(run: Run, row: CrawlURL) -> None:

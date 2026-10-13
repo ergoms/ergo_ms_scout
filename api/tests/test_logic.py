@@ -187,3 +187,51 @@ class URLIdentityTests(SimpleTestCase):
 
         self.assertEqual(resolve_url('http://example.com:bad/', 'http://example.com/', []),
                          (None, 'invalid_url'))
+
+
+class HostScopeTests(SimpleTestCase):
+    def test_unicode_and_punycode_are_the_same_crawl_boundary(self):
+        from modules.scout.api.services.plan import normalize_plan, plan_hash
+        from modules.scout.api.services.url_norm import host_allowed
+
+        fields = [{'name': 'title', 'kind': 'css', 'selector': 'h1', 'scope': 'page', 'many': False}]
+        unicode_plan = normalize_plan(
+            ['https://пример.рф/path'],
+            fields,
+            crawl={'mode': 'site'},
+        )
+        puny_plan = normalize_plan(
+            ['https://xn--e1afmkfd.xn--p1ai/path'],
+            fields,
+            crawl={'mode': 'site', 'allowed_hosts': ['пример.рф']},
+        )
+        self.assertEqual(unicode_plan['seed_urls'], ['https://xn--e1afmkfd.xn--p1ai/path'])
+        self.assertEqual(unicode_plan['crawl']['allowed_hosts'], ['xn--e1afmkfd.xn--p1ai'])
+        self.assertEqual(plan_hash(unicode_plan), plan_hash(puny_plan))
+        nested = normalize_plan(
+            ['https://www.пример.рф/item'],
+            fields,
+            crawl={'mode': 'site', 'allowed_hosts': ['xn--e1afmkfd.xn--p1ai'], 'preview_urls': ['https://под.пример.рф/a']},
+        )
+        self.assertEqual(nested['seed_urls'], ['https://www.xn--e1afmkfd.xn--p1ai/item'])
+        self.assertEqual(nested['crawl']['preview_urls'], ['https://xn--d1atc.xn--e1afmkfd.xn--p1ai/a'])
+        self.assertTrue(host_allowed('https://xn--e1afmkfd.xn--p1ai/a', ['пример.рф']))
+        self.assertTrue(host_allowed('https://www.xn--e1afmkfd.xn--p1ai/a', ['пример.рф']))
+        self.assertFalse(host_allowed('https://evil.test/a', ['пример.рф']))
+
+    def test_ipv6_host_is_accepted_and_a_different_address_is_not(self):
+        from modules.scout.api.services.plan import normalize_plan
+        from modules.scout.api.services.url_norm import host_allowed
+
+        fields = [{'name': 'title', 'kind': 'css', 'selector': 'h1', 'scope': 'page', 'many': False}]
+        plan = normalize_plan(['http://[0:0:0:0:0:0:0:1]/page'], fields, crawl={'mode': 'site'})
+        self.assertEqual(plan['seed_urls'], ['http://[::1]/page'])
+        self.assertEqual(plan['crawl']['allowed_hosts'], ['::1'])
+        self.assertTrue(host_allowed('http://[::1]/page', ['[::1]']))
+        self.assertFalse(host_allowed('http://[2001:db8::2]/page', ['::1']))
+        with self.assertRaises(ScoutError):
+            normalize_plan(
+                ['https://пример.рф/'],
+                fields,
+                crawl={'mode': 'site', 'allowed_hosts': ['example.com']},
+            )
