@@ -69,22 +69,14 @@ def load_snapshot(public_id):
 
 
 def _fetch_snapshot(snapshot):
-    from .protection_sessions import fetch_with_challenge
-
-    def still_active():
-        return VisualSnapshot.objects.filter(pk=snapshot.pk, status='fetching',
-                                             created_at__gt=timezone.now() - _LOAD_DEADLINE).exists()
-
     if not snapshot.proxy_profile_revision_public_id:
-        return fetch_with_challenge(
-            fetch_public_html, snapshot.source_url, scope=snapshot, should_continue=still_active,
-            timeout_seconds=DEFAULT_LIMITS['timeout_seconds'], max_bytes=DEFAULT_LIMITS['max_bytes'],
+        return fetch_public_html(
+            snapshot.source_url, timeout_seconds=DEFAULT_LIMITS['timeout_seconds'], max_bytes=DEFAULT_LIMITS['max_bytes'],
         )
     for delay in (*PROXY_RETRY_DELAYS, None):
         try:
-            return fetch_with_challenge(
-                fetch_proxy_html, snapshot.source_url, scope=snapshot, should_continue=still_active,
-                proxy_id=snapshot.proxy_profile_revision_public_id, revision_id=snapshot.proxy_profile_revision_public_id,
+            return fetch_proxy_html(
+                snapshot.source_url, revision_id=snapshot.proxy_profile_revision_public_id,
                 owner=snapshot.user_public_id, timeout_seconds=10, max_bytes=DEFAULT_LIMITS['max_bytes'],
             )
         except FetchError as exc:

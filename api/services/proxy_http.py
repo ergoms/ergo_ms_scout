@@ -209,10 +209,10 @@ def proxy_target_allowed(url):
     return True
 
 
-def fetch_proxy_html(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None, same_origin=False, request_headers=None):
+def fetch_proxy_html(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None, same_origin=False):
     return _fetch_proxy(
         fetch_html, url, revision_id=revision_id, owner=owner, timeout_seconds=timeout_seconds,
-        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=same_origin, request_headers=request_headers,
+        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=same_origin,
     )
 
 
@@ -230,7 +230,7 @@ def fetch_proxy_text(url, *, revision_id, owner, timeout_seconds, max_bytes, url
     )
 
 
-def _fetch_proxy(fetch, url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed, same_origin, request_headers=None):
+def _fetch_proxy(fetch, url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed, same_origin):
     def target_allowed(target):
         return (
             proxy_target_allowed(target)
@@ -242,7 +242,6 @@ def _fetch_proxy(fetch, url, *, revision_id, owner, timeout_seconds, max_bytes, 
         return fetch(
             url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=target_allowed,
             handlers=(ProxyHandler({}), _ProxyHTTPSHandler(revision_id, owner, timeout_seconds)),
-            **({'request_headers': request_headers} if request_headers else {}),
         )
     except FetchError:
         raise

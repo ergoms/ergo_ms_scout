@@ -462,27 +462,3 @@ class ProxyTests(TestCase):
         self.assertEqual(result['error']['code'], 'cloudflare_challenge')
         self.assertNotIn('html', result)
         self._assert_no_secret(result)
-
-    def test_browser_gateway_preserves_proxy_tls_and_keeps_authorization_out_of_origin(self):
-        from urllib3.util.ssltransport import SSLTransport
-        from modules.scout.api.services.browser_egress import BrowserEgress
-
-        for anonymous in (False, True):
-            with self.subTest(anonymous=anonymous):
-                self.proxy.auth = None if anonymous else _AUTH
-                profile = self._profile(anonymous=anonymous)
-                connection = load_proxy(profile['revision_public_id'], self.user.public_id)
-                with BrowserEgress('https://origin.test', proxy=connection, seconds=5) as gateway:
-                    with gateway._connect('origin.test', 443, 3) as outer:
-                        with SSLTransport(outer, ssl.create_default_context(), server_hostname='origin.test') as inner:
-                            inner.sendall(b'GET /catalog HTTP/1.1\r\nHost: origin.test\r\nConnection: close\r\n\r\n')
-                            body = bytearray()
-                            while piece := inner.recv(4096):
-                                body += piece
-                            self.assertIn(b'<h1>Catalog</h1>', body)
-                self.assertEqual(self.proxy.requests[-1][0], b'CONNECT 8.8.8.8:443 HTTP/1.1')
-                if anonymous:
-                    self.assertNotIn(b'proxy-authorization', self.proxy.requests[-1][1])
-                else:
-                    self.assertEqual(self.proxy.requests[-1][1][b'proxy-authorization'], _AUTH)
-                self.assertNotIn(b'proxy-authorization', self.origin.requests[-1][1])

@@ -195,29 +195,6 @@ class VisualSnapshot(PublicIdMixin, models.Model):
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
 
-class ProtectionSession(PublicIdMixin, models.Model):
-    run = models.ForeignKey(Run, null=True, on_delete=models.CASCADE, related_name='protection_sessions')
-    visual_snapshot = models.ForeignKey(VisualSnapshot, null=True, on_delete=models.CASCADE, related_name='protection_sessions')
-    user_public_id = models.UUIDField()
-    origin = models.CharField(max_length=300)
-    proxy_revision_public_id = models.UUIDField(null=True)
-    key_id = models.CharField(max_length=80, blank=True)
-    ciphertext = models.TextField(blank=True)
-    expires_at = models.DateTimeField(db_index=True)
-    attempt_count = models.PositiveSmallIntegerField(default=0)
-    generation = models.PositiveIntegerField(default=0)
-    busy_until = models.DateTimeField(null=True)
-
-    class Meta:
-        constraints = [
-            models.CheckConstraint(condition=(models.Q(run__isnull=False, visual_snapshot__isnull=True)
-                                              | models.Q(run__isnull=True, visual_snapshot__isnull=False)),
-                                   name='scout_protection_one_scope'),
-            models.UniqueConstraint(fields=['run', 'origin'], name='scout_protection_run_origin'),
-            models.UniqueConstraint(fields=['visual_snapshot', 'origin'], name='scout_protection_visual_origin'),
-        ]
-
-
 class ProxyProfile(PublicIdMixin, models.Model):
     user_public_id = models.UUIDField(db_index=True)
     revoked_at = models.DateTimeField(null=True, blank=True)

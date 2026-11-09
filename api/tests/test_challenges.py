@@ -22,10 +22,6 @@ from ..services.visual_snapshots import load_snapshot
 
 CF = b'<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></script>'
 YANDEX = b'<title>CAPTCHA</title><script src="https://smartcaptcha.cloud.yandex.ru/captcha.js"></script><div class="smart-captcha"></div>'
-CHECKO = '''<title>Пожалуйста, подтвердите, что вы человек!</title>
-<script src="https://smartcaptcha.yandexcloud.net/captcha.js" defer></script>
-<form action="/check/humaneness" method="post"><input name="challenge" value="sentinel-challenge">
-<input name="authenticity_token" value="sentinel-csrf"><div class="smart-captcha"></div></form>'''.encode()
 
 
 def headers(**values):
@@ -41,7 +37,6 @@ class ChallengeDetectionTests(SimpleTestCase):
             (CF, 'https://example.com/', {}, 'cloudflare_challenge'),
             (b'not HTML', 'https://example.com/', {'CF_Mitigated': 'challenge'}, 'cloudflare_challenge'),
             (YANDEX, 'https://example.com/', {}, 'yandex_captcha'),
-            (CHECKO, 'https://checko.ru/', {}, 'yandex_captcha'),
             (b'<form action="/checkcaptcha"><input name="rep"></form>', 'https://yandex.ru/showcaptcha', {}, 'yandex_captcha'),
             (b'<title>CAPTCHA</title><form><input name="captcha"><img src="/c.png"></form>', 'https://example.com/', {}, 'captcha_required'),
         ):
@@ -55,13 +50,11 @@ class ChallengeDetectionTests(SimpleTestCase):
         for body, url in (
             (b'<title>Catalog</title>' + YANDEX.split(b'</title>', 1)[1], 'https://example.com/'),
             (b'<title>SmartCaptcha integration guide</title>' + YANDEX.split(b'</title>', 1)[1], 'https://example.com/'),
-            (b'<title>Catalog</title>' + CHECKO.split(b'</title>', 1)[1], 'https://checko.ru/'),
             (b'<title>Login</title><div class="cf-turnstile"></div>', 'https://example.com/'),
             (b'<title>Cloudflare CAPTCHA documentation</title><pre>&lt;script src="/cdn-cgi/challenge-platform/"&gt;</pre>', 'https://example.com/'),
             (b'<title>Error 403</title><p>Forbidden</p>', 'https://checko.ru/'),
             (b'<form action="https://yandex.ru.evil.test/checkcaptcha"><input name="rep"></form>', 'https://yandex.ru/showcaptcha'),
             (b'<title>CAPTCHA</title><script src="https://smartcaptcha.cloud.yandex.ru.evil.test/captcha.js"></script>', 'https://example.com/'),
-            (CHECKO.replace(b'smartcaptcha.yandexcloud.net', b'smartcaptcha.yandexcloud.net.evil.test'), 'https://checko.ru/'),
             (b'<title>Article</title><p>captcha Cloudflare Yandex</p>', 'https://example.com/'),
         ):
             raise_for_challenge(headers=headers(), url=url, body=body)
@@ -71,8 +64,6 @@ class ChallengeDetectionTests(SimpleTestCase):
         for status, body, extra, code in (
             (403, CF, {}, 'cloudflare_challenge'),
             (503, gzip.compress(YANDEX), {'Content_Encoding': 'gzip'}, 'yandex_captcha'),
-            (429, CHECKO, {}, 'yandex_captcha'),
-            (429, b'<title>Too Many Requests</title>', {}, 'http_429'),
             (200, b'', {'CF_Mitigated': 'challenge'}, 'cloudflare_challenge'),
             (403, b'<title>Error 403</title>', {}, 'http_403'),
         ):
@@ -84,7 +75,6 @@ class ChallengeDetectionTests(SimpleTestCase):
                     with self.assertRaises(FetchError) as failure:
                         fetch_html('https://example.com/', timeout_seconds=1, max_bytes=10000)
                 self.assertEqual(failure.exception.code, code)
-                self.assertEqual(failure.exception.retryable, code == 'http_429')
                 self.assertNotIn('sentinel', str(failure.exception))
                 self.assertTrue(response.closed)
 

@@ -72,10 +72,6 @@ def publish_ready(run_public_id=None) -> None:
     from .scheduled_runs import progress_scheduled_runs
 
     recover_expired_leases()
-    if not run_public_id:
-        from .protection_sessions import clear_expired_sessions, setting
-        if str(setting('SCOUT_BROWSER_ENABLED')).lower() in {'1', 'true', 'yes', 'on'}:
-            clear_expired_sessions()
     _settle_idle_runs(run_public_id)
     progress_scheduled_runs(run_public_id)
     if inline_runner():
@@ -302,15 +298,8 @@ def _fetch(task: Task, token: int) -> None:
 
         fetch = fetch_proxy_html
         proxy_params = {'revision_id': revision_id, 'owner': task.run.user_public_id}
-    from .protection_sessions import fetch_with_challenge
-
-    def still_active():
-        return Task.objects.filter(pk=task.pk, fencing_token=token, status=TASK_LEASED,
-                                   run__status__in=CLAIMABLE_RUN_STATUSES).exists()
-
-    result = fetch_with_challenge(
-        fetch, task.payload['url'], scope=task.run,
-        proxy_id=task.run.job_revision.proxy_profile_revision_public_id, should_continue=still_active,
+    result = fetch(
+        task.payload['url'],
         timeout_seconds=timeout,
         max_bytes=int(task.payload.get('byte_allowance') or limits['max_bytes']),
         url_allowed=url_allowed,
@@ -549,10 +538,6 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
         if run.status in (RUN_CANCELLING, RUN_CANCELLED):
             locked.status = TASK_CANCELLED
             locked.lease_until = None
-        elif code == 'captcha_browser_cancelled' and run.status in ('pausing', 'paused'):
-            locked.status = TASK_PENDING
-            locked.lease_until = None
-            locked.published_at = None
         elif code == 'too_large' and locked.payload.get('byte_allowance', limits_max_bytes(run)) < limits_max_bytes(run):
             from .crawl_budget import stop_fetches
             stop_fetches(run, 'bytes')

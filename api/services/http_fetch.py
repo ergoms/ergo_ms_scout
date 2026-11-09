@@ -7,7 +7,6 @@ import zlib
 from http.client import HTTPException
 from urllib import error as urlerror
 from urllib import request as urlrequest
-from urllib.parse import urlsplit
 
 from django.utils.translation import gettext as _
 
@@ -35,24 +34,16 @@ class _LimitedRedirect(urlrequest.HTTPRedirectHandler):
                 raise FetchError('bad_redirect', _('Переадресация ведёт не на http-адрес'), retryable=False)
             if self.url_allowed is not None and not self.url_allowed(newurl):
                 raise FetchError('redirect_scope', _('Переадресация выходит за пределы плана'), retryable=False)
-            redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-            if redirected is not None:
-                def origin(url):
-                    parts = urlsplit(url)
-                    return parts.scheme, parts.hostname, parts.port or (443 if parts.scheme == 'https' else 80)
-                if origin(req.full_url) != origin(newurl):
-                    redirected.remove_header('Cookie')
-                    redirected.remove_header('Authorization')
-            return redirected
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
         finally:
             # urllib пытается вычитать всё тело редиректа, хотя соединение уже закрывается.
             fp.close()
 
 
-def fetch_html(url: str, *, timeout_seconds: int, max_bytes: int, url_allowed=None, handlers=(), request_headers=None) -> dict:
+def fetch_html(url: str, *, timeout_seconds: int, max_bytes: int, url_allowed=None, handlers=()) -> dict:
     result = _fetch_response(
         url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed,
-        handlers=handlers, accept='text/html,application/xhtml+xml', media_types=_HTML_TYPES, request_headers=request_headers,
+        handlers=handlers, accept='text/html,application/xhtml+xml', media_types=_HTML_TYPES,
     )
     content_type = result['content_type']
     result['charset'] = detected_charset(result['body'], content_type)[:40]
@@ -74,13 +65,13 @@ def fetch_text(url: str, *, timeout_seconds: int, max_bytes: int, url_allowed=No
     )
 
 
-def _fetch_response(url, *, timeout_seconds, max_bytes, url_allowed, handlers, accept, media_types=(), request_headers=None) -> dict:
+def _fetch_response(url, *, timeout_seconds, max_bytes, url_allowed, handlers, accept, media_types=()) -> dict:
     if url_allowed is not None and not url_allowed(url):
         raise FetchError('url_scope', _('Адрес выходит за пределы плана'), retryable=False)
     opener = urlrequest.build_opener(_LimitedRedirect(url_allowed), *handlers)
     req = urlrequest.Request(
         url,
-        headers={'User-Agent': 'ERGO-SCOUT/0.1', 'Accept': accept, **(request_headers or {})},
+        headers={'User-Agent': 'ERGO-SCOUT/0.1', 'Accept': accept},
     )
     try:
         with opener.open(req, timeout=timeout_seconds) as response:

@@ -15,7 +15,6 @@ _GATE_TITLES = (
     'подтвердите, что', 'подтвердите что', 'вы не робот', 'доступ ограничен',
 )
 _YANDEX_HOSTS = frozenset({'yandex.ru', 'yandex.com', 'yandex.by', 'yandex.kz', 'yandex.uz', 'yandex.com.tr'})
-_SMARTCAPTCHA_HOSTS = frozenset({'smartcaptcha.cloud.yandex.ru', 'smartcaptcha.yandexcloud.net'})
 
 
 def raise_for_challenge(*, headers, url: str, body: bytes = b'', content_type: str = '') -> None:
@@ -40,7 +39,7 @@ def raise_for_challenge(*, headers, url: str, body: bytes = b'', content_type: s
         _raise('cloudflare_challenge')
 
     # Обычный виджет на странице входа/каталога сам по себе не означает заглушку.
-    if gate and any(_host(node.get('src', '')) in _SMARTCAPTCHA_HOSTS for node in scripts):
+    if gate and any(_host(node.get('src', '')) == 'smartcaptcha.cloud.yandex.ru' for node in scripts):
         _raise('yandex_captcha')
     source_host = _host(url)
     for form in root.xpath('//form'):

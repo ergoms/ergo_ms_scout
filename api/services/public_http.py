@@ -45,9 +45,9 @@ def public_url_allowed(url):
     raise FetchError('url_blocked', 'Нужен публичный HTTP(S)-адрес страницы', retryable=False)
 
 
-def fetch_public_html(url, *, timeout_seconds, max_bytes, url_allowed=None, request_headers=None):
+def fetch_public_html(url, *, timeout_seconds, max_bytes, url_allowed=None):
     return _fetch_public(
-        fetch_html, url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed, request_headers=request_headers,
+        fetch_html, url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed,
     )
 
 
@@ -63,14 +63,13 @@ def fetch_public_text(url, *, timeout_seconds, max_bytes, url_allowed=None):
     )
 
 
-def _fetch_public(fetch, url, *, timeout_seconds, max_bytes, url_allowed, request_headers=None):
+def _fetch_public(fetch, url, *, timeout_seconds, max_bytes, url_allowed):
     def target_allowed(target):
         return (url_allowed is None or url_allowed(target)) and public_url_allowed(target)
 
     return fetch(
         url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=target_allowed,
         handlers=(ProxyHandler({}), _PublicHTTPHandler(), _PublicHTTPSHandler()),
-        **({'request_headers': request_headers} if request_headers else {}),
     )
 
 
