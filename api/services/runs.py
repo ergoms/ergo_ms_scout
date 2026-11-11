@@ -61,15 +61,18 @@ _KEEP_PROXY = object()
 
 def revise_job(*, job: Job, seed_urls, fields, record=None, title=None, crawl=None,
                proxy_profile_revision_public_id=_KEEP_PROXY, identity=IDENTITY_UNSET) -> JobRevision:
-    plan = normalize_plan(seed_urls, fields, record=record, crawl=crawl, identity=identity)
     with transaction.atomic():
         locked_job = Job.objects.select_for_update().get(pk=job.pk)
         if Run.objects.filter(job_revision__job=locked_job, status__in=OCCUPYING_STATUSES).exists():
             raise ScoutError('slot_busy', _('Нельзя менять план, пока сбор не завершён'))
+        current = _latest_revision(locked_job)
+        plan = normalize_plan(
+            seed_urls, fields, limits=current.limits if current else None,
+            record=record, crawl=crawl, identity=identity,
+        )
         if title is not None:
             locked_job.title = _clean_title(title)
             locked_job.save(update_fields=['title', 'updated_at'])
-        current = _latest_revision(locked_job)
         if proxy_profile_revision_public_id is _KEEP_PROXY:
             proxy_profile_revision_public_id = current.proxy_profile_revision_public_id if current else None
         _bind_proxy(plan, proxy_profile_revision_public_id, locked_job.user_public_id)

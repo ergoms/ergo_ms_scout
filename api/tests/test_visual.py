@@ -15,6 +15,7 @@ from modules.scout.api.permissions import CanConfigureScout
 from modules.scout.api.services.errors import FetchError
 from modules.scout.api.services.html_extract import extract_html
 from modules.scout.api.services.public_http import _connect_public, fetch_public_html
+from modules.scout.api.services.visual_rules import VisualDocument
 from modules.scout.api.services.visual_snapshots import delete_expired_snapshots, load_snapshot
 
 _URL = 'https://example.com/catalog'
@@ -61,6 +62,22 @@ class PublicFetchTests(SimpleTestCase):
             fetch_public_html('http://example.com/', timeout_seconds=5, max_bytes=100)
         self.assertEqual(error.exception.code, 'url_blocked')
         create_socket.assert_called_once()
+
+
+class VisualSamplingTests(SimpleTestCase):
+    def test_manual_field_check_samples_the_first_match_beyond_twenty_cards(self):
+        body = b'<main>' + b'<article>No price</article>' * 20 + (
+            b'<article><span class="price">42</span></article></main>'
+        )
+        record = {'kind': 'css', 'selector': 'article'}
+        field = {'name': 'price', 'kind': 'css', 'selector': '.price', 'scope': 'record', 'many': False}
+        checked = VisualDocument(body, 'utf-8').check(source_url=_URL, record=record, field=field)
+        extracted = extract_html(body, [field], record=record)
+
+        self.assertEqual(checked['row_count'], 21)
+        self.assertEqual(len(checked['rows']), 20)
+        self.assertEqual([row['match_count'] for row in checked['rows']], [0] * 19 + [1])
+        self.assertEqual(checked['rows'][-1]['value'], extracted[-1]['values']['price'])
 
 
 class VisualSnapshotTests(TestCase):

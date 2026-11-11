@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Case, Count, Q, When
 from django.utils import timezone
 
 from ..models import CrawlURL, PageSnapshot, Run, Task
@@ -21,6 +21,7 @@ from .constants import (
     TASK_FETCH,
     TASK_PENDING,
     TASK_RETRY_WAIT,
+    TASK_SUCCEEDED,
 )
 from .page_links import iter_hrefs
 from .page_types import matching_page_types
@@ -66,11 +67,10 @@ def discover(run: Run, snapshot: PageSnapshot, body: bytes) -> None:
         return
     if run.status not in (RUN_RUNNING, RUN_PAUSING):
         return
-    linked = CrawlURL.objects.filter(run=run, snapshot=snapshot)
-    # Алиас редиректа — тот же документ. Его глубина не должна заменять глубину адреса, с которого пришли.
-    parent = linked.exclude(skip_reason='redirect').order_by('depth', 'pk').first()
-    if parent is None:
-        parent = linked.order_by('depth', 'pk').first()
+    # Алиас получает глубину редиректа, пока до него не найден более короткий путь.
+    parent = CrawlURL.objects.filter(run=run, snapshot=snapshot).order_by(
+        'depth', Case(When(skip_reason='redirect', then=1), default=0), 'pk',
+    ).first()
     depth = 0 if parent is None else parent.depth + 1
     page = snapshot.final_url or snapshot.source_url
     hrefs, base = iter_hrefs(body, snapshot.content_type, snapshot.charset, page)
@@ -239,6 +239,14 @@ def _link_rejection(crawl: dict, normalized: str, depth: int) -> str | None:
 def _attach_or_fetch(run: Run, row: CrawlURL) -> None:
     crawl = _config(run)
     snapshot = PageSnapshot.objects.filter(run=run, source_url=row.normalized_url).first()
+    if snapshot is not None and crawl.get('visit') and snapshot.final_url not in ('', snapshot.source_url):
+        # Предпросмотр не применяет visit, а снимок хранит только последний адрес редиректа.
+        # Основная загрузка заново проверит все переходы, сохранив попытки предпросмотра.
+        key = f'fetch:{row.url_key}'
+        Task.objects.filter(run=run, idempotency_key=key, status=TASK_SUCCEEDED).exclude(
+            payload__has_key='crawl_public_id',
+        ).update(idempotency_key=f'preview:{key}')
+        snapshot = None
     if snapshot is not None:
         from .crawl_budget import snapshot_bytes
         if snapshot_bytes(run) + snapshot.byte_size > int(crawl.get('max_total_bytes') or 1):

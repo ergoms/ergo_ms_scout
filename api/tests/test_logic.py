@@ -1,13 +1,19 @@
 """Проверки аудита: карточки, XPath, кодировка, журнал, сжатие и снимок."""
 
+import csv
+import io
 import zlib
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+from uuid import UUID
 
 from django.test import SimpleTestCase, TestCase
 
 from modules.scout.api.services.constants import FIELD_TEXT_LIMIT
 from modules.scout.api.services.errors import FetchError, ScoutError
-from modules.scout.api.services.html_extract import extract_html
+from modules.scout.api.services.exporting import _write_csv
+from modules.scout.api.services.html_extract import _parse, extract_html
 from modules.scout.api.services.http_fetch import _unwrap_content
 from modules.scout.api.services.journal import describe_extract
 from modules.scout.api.services.plan import normalize_plan, plan_hash
@@ -160,6 +166,35 @@ class JournalTests(SimpleTestCase):
         self.assertIn('Подтвердите план', text)
         self.assertNotIn('Загрузите страницу', text)
 
+    def test_diagnostics_parse_once_and_count_relative_xpath_within_cards(self):
+        rules = [
+            {'name': 'heading', 'kind': 'css', 'selector': 'h1', 'scope': 'page', 'many': False},
+            {'name': 'price', 'kind': 'xpath', 'selector': './b', 'scope': 'record', 'many': True},
+        ]
+        body = b'<div><b>outside</b><h1>Shop</h1><article><b>1</b><b>2</b></article><article><b>3</b></article></div>'
+        with patch('modules.scout.api.services.journal._parse', wraps=_parse) as parse:
+            lines = describe_extract(body, rules, 2, record={'kind': 'css', 'selector': 'article'})
+        parse.assert_called_once()
+        self.assertIn('совпадений 1', lines[0])
+        self.assertIn('совпадений 3', lines[1])
+
+
+class CsvExportTests(SimpleTestCase):
+    def test_source_public_id_keeps_its_value_and_the_record_id(self):
+        values = {'public_id': {'normalized': 'article-123'}, 'name': {'normalized': 'A'}}
+        record_id = UUID(int=1)
+        records = Mock()
+        records.values_list.return_value.iterator.return_value = iter([values])
+        records.iterator.return_value = iter([SimpleNamespace(public_id=record_id, values=values)])
+        output = io.StringIO()
+
+        _write_csv(records, output)
+
+        self.assertEqual(list(csv.reader(io.StringIO(output.getvalue()))), [
+            ['public_id', 'field.public_id', 'name'],
+            [str(record_id), 'article-123', 'A'],
+        ])
+
 
 class FetchLimitTests(SimpleTestCase):
     def test_deflate_stops_at_the_size_limit(self):
@@ -213,7 +248,7 @@ class FetchKeyTests(TestCase):
         self.assertEqual(task.payload['url'], url)
         self.assertNotIn(url, task.idempotency_key)
 
-    def test_revise_saves_the_title(self):
+    def test_revise_saves_the_title_and_preserves_existing_limits(self):
         from django.contrib.auth import get_user_model
         from modules.scout.api.services.runs import revise_job
 
@@ -230,9 +265,13 @@ class FetchKeyTests(TestCase):
             seed_urls=[url],
             fields=fields,
         )
-        revise_job(job=job, seed_urls=[url], fields=fields, title='Новое')
+        revision = job.revisions.get()
+        revision.limits = {**revision.limits, 'max_bytes': 2048, 'timeout_seconds': 7}
+        revision.save(update_fields=['limits'])
+        revised = revise_job(job=job, seed_urls=[url], fields=fields, title='Новое')
         job.refresh_from_db()
         self.assertEqual(job.title, 'Новое')
+        self.assertEqual(revised.limits, revision.limits)
 
 
 class URLIdentityTests(SimpleTestCase):

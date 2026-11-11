@@ -1,9 +1,10 @@
 """Захват назначенного дня и продолжение подготовки подтверждённого плана."""
 
+import logging
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.utils import timezone
 
 from ..models import DailySchedule, Run, ScheduleRevision, ScheduledOccurrence
@@ -18,6 +19,7 @@ from .runs import _lock_single_slot, explore_revision, start_run
 from .schedule_calendar import scheduled_time, START_WINDOW_SECONDS
 
 HISTORY_BATCH_SIZE = 100
+logger = logging.getLogger('celery.module.scout.tasks')
 
 
 def sweep_schedules(*, now=None):
@@ -171,6 +173,11 @@ def _start_prepared_run(occurrence, run):
                 start_run(run=run)
             except ScoutError as exc:
                 reason = exc.code
+            except DatabaseError:
+                raise
+            except Exception:
+                logger.exception('SCOUT: сбой автоматической подготовки запуска %s', run.public_id)
+                reason = 'unexpected'
     if reason:
         run.status = RUN_FAILED
         run.finished_at = timezone.now()

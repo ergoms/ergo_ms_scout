@@ -240,6 +240,8 @@ function accept() {
     return
   }
   const field = { ...result.value.field }
+  const conversion = form.value.fields[editing.value]?.conversion
+  if (conversion && !field.many) field.conversion = conversion
   const duplicate = form.value.fields.findIndex(
     (item, index) => item.name === field.name && index !== editing.value,
   )

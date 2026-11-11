@@ -121,12 +121,25 @@ class VisualDocument:
         rows = [{'node_id': self.ids.get(card)} for card in sample]
         if field_rule is not None:
             if field_rule['scope'] == 'page':
-                result = self._field_result(self.root, field_rule, relative=False)
+                matches = _nodes(self.root, field_rule, relative=False)
+                result = self._field_result(matches, field_rule)
                 for row in rows:
                     row.update(result)
             else:
+                select = etree.XPath(_css_to_xpath(field_rule['selector'], relative=True))
                 for row, card in zip(rows, sample):
-                    row.update(self._field_result(card, field_rule, relative=True))
+                    row.update(self._field_result(select(card), field_rule))
+                if len(cards) > len(sample) and not any(row['match_count'] for row in rows):
+                    sampled = set(sample)
+                    for card in cards:
+                        if card in sampled:
+                            continue
+                        matches = select(card)
+                        if matches:
+                            # Keep a card explicitly selected in the editor.
+                            del rows[-2 if sample[-1] is selected_card else -1]
+                            rows.append({'node_id': self.ids.get(card), **self._field_result(matches, field_rule)})
+                            break
 
         return {'record': record, 'field': field_rule, 'row_count': len(cards), 'rows': rows}
 
@@ -186,9 +199,7 @@ class VisualDocument:
             return fallback
         raise ScoutError('selector_not_suggested', 'Для этого элемента не удалось предложить селектор')
 
-    def _field_result(self, context, rule, *, relative):
-        # Поддерживаемый CSS с относительным путём видит только потомков карточки.
-        matches = _nodes(context, rule, relative=relative)
+    def _field_result(self, matches, rule):
         ids = [self.ids[node] for node in matches if node in self.ids][:_SAMPLE_LIMIT]
         value = None
         if matches:

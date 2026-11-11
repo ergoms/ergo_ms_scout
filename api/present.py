@@ -1,8 +1,9 @@
 """Ответы API без числовых id базы."""
 
-from django.db.models import Count
+from django.db.models import Count, Q
 
 from .models import CrawlURL
+from .services.constants import TASK_EXTRACT, TASK_FAILED, TASK_FETCH, TASK_SUCCEEDED
 from .services.journal import journal_lines, stored_messages
 from .services.product_identity import public_identity
 from .services.value_types import legacy_values, missing_typed_fields
@@ -56,6 +57,12 @@ def run_payload(run, *, preview=None, page_type_preview=None, summary=False) -> 
     if (run.job_revision.crawl or {}).get('sitemap_url') or (run.job_revision.crawl or {}).get('sitemap_from_robots'):
         data['sitemap'] = scan_payload(run)
     if summary:
+        succeeded = Q(status=TASK_SUCCEEDED)
+        data['progress'] = run.tasks.aggregate(
+            fetched=Count('pk', filter=succeeded & Q(kind=TASK_FETCH)),
+            extracted=Count('pk', filter=succeeded & Q(kind=TASK_EXTRACT)),
+            errors=Count('pk', filter=Q(status=TASK_FAILED)),
+        )
         return data
     data.update(
         journal=journal_lines(run),

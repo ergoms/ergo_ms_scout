@@ -16,7 +16,8 @@ from rest_framework.test import APIClient
 
 from modules.scout.api.models import CrawlURL, Record, Run, Task
 from modules.scout.api.services.constants import (
-    RUN_COMPLETED, RUN_FAILED, RUN_RUNNING, TASK_CRAWL, TASK_EXTRACT, TASK_FETCH, TASK_PENDING, TASK_SITEMAP,
+    RUN_COMPLETED, RUN_COMPLETED_WITH_ERRORS, RUN_FAILED, RUN_RUNNING,
+    TASK_CRAWL, TASK_EXTRACT, TASK_FETCH, TASK_PENDING, TASK_SITEMAP,
 )
 from modules.scout.api.services.crawl_budget import reconcile
 from modules.scout.api.services.frontier import discover, remember
@@ -82,6 +83,11 @@ def _site(port_holder):
                 self.send_header('Location', f'http://{host}/chain-mid')
                 self.end_headers()
                 return
+            if path == '/visit-start':
+                self.send_response(302)
+                self.send_header('Location', f'http://{host}/chain-mid')
+                self.end_headers()
+                return
             if path == '/chain-mid':
                 self.send_response(302)
                 self.send_header('Location', f'http://{host}/chain-land')
@@ -129,6 +135,8 @@ def _body(path, host):
         return '<html><body><h1>Page2</h1><a href="/item?id=9">id</a></body></html>'
     if path.startswith('/quiet'):
         return '<html><body><h1>Quiet</h1></body></html>'
+    if path == '/redirect-start':
+        return '<html><body><h1>Start</h1><a href="/hop">hop</a></body></html>'
     if path.startswith('/hop'):
         return '<html><body><h1>Hop</h1><a href="/redir">r</a></body></html>'
     if path.startswith('/land'):
@@ -530,6 +538,41 @@ class CrawlTests(TestCase):
         self.assertEqual(run.records.count(), 0)
         self.assertTrue(run.crawl_urls.filter(skip_reason='visit').exists())
 
+    def test_preview_redirect_rechecks_every_hop_against_main_visit_filter(self):
+        cases = [
+            ('/redir', '/land', ['/redir']),
+            ('/visit-start', '/chain-land', ['/visit-start', '/chain-land']),
+        ]
+        for source, final, allowed in cases:
+            with self.subTest(source=source):
+                run = self._crawl(source, visit=[{'kind': 'prefix', 'pattern': path} for path in allowed])
+                self.assertEqual(run.status, RUN_COMPLETED_WITH_ERRORS)
+                self.assertEqual(run.snapshots.get().final_url, f'{self.origin}{final}')
+                self.assertEqual(run.crawl_urls.get().state, 'failed')
+                self.assertEqual(run.tasks.get(status='failed').error_code, 'redirect_scope')
+                self.assertEqual(run.tasks.get(status='succeeded').attempt_count, 1)
+                self.assertFalse(run.records.exists())
+                self.assertFalse(run.tasks.filter(kind__in=(TASK_CRAWL, TASK_EXTRACT)).exists())
+
+    def test_main_fetch_updates_cached_final_url_for_identical_html(self):
+        result = {
+            'body': b'<h1>Title</h1>', 'status': 200, 'content_type': 'text/html', 'charset': 'utf-8',
+        }
+        responses = [
+            dict(result, final_url=f'{self.origin}/outside'),
+            dict(result, final_url=f'{self.origin}/quiet'),
+        ]
+        with patch('modules.scout.api.services.tasks_exec.fetch_public_html', side_effect=responses) as fetch:
+            run = self._crawl('/go', visit=[{'kind': 'prefix', 'pattern': path} for path in ['/go', '/quiet']])
+
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(run.status, RUN_COMPLETED)
+        snapshot = run.snapshots.get()
+        self.assertEqual(snapshot.final_url, f'{self.origin}/quiet')
+        self.assertEqual(run.records.get().snapshot_id, snapshot.pk)
+        self.assertTrue(run.crawl_urls.filter(normalized_url=f'{self.origin}/quiet', state='done').exists())
+        self.assertFalse(run.crawl_urls.filter(normalized_url=f'{self.origin}/outside').exists())
+
     def test_unvisited_control_preview_does_not_use_main_byte_budget(self):
         run = self._crawl('/quiet', preview_urls=[f'{self.origin}/wide'], max_total_bytes=100)
         self.assertEqual(run.status, RUN_COMPLETED)
@@ -632,6 +675,23 @@ class CrawlTests(TestCase):
         self.assertEqual(nxt.skip_reason, 'depth')
         self.assertEqual(Task.objects.filter(run=run, kind='fetch', status='succeeded').count(), 2)
         self.assertFalse(run.snapshots.filter(source_url=f'{self.origin}/chain-next').exists())
+
+    def test_shorter_path_to_redirect_target_reopens_its_child_links(self):
+        run = self._open('/redirect-start', max_depth=2)
+        seed = run.snapshots.get(source_url=f'{self.origin}/redirect-start')
+        target = run.crawl_urls.get(normalized_url=f'{self.origin}/land')
+        child = run.crawl_urls.get(normalized_url=f'{self.origin}/next')
+        self.assertEqual((target.depth, target.skip_reason), (2, 'redirect'))
+        self.assertEqual((child.depth, child.state, child.skip_reason), (3, 'skipped', 'depth'))
+
+        discover(run, seed, b'<a href="/land">short path</a>')
+
+        target.refresh_from_db()
+        child.refresh_from_db()
+        self.assertEqual(target.depth, 1)
+        self.assertEqual((child.depth, child.state, child.parent_id), (2, 'active', target.pk))
+        self.assertEqual(run.tasks.filter(kind=TASK_FETCH, payload__url=child.normalized_url).count(), 1)
+        self.assertFalse(run.tasks.filter(kind=TASK_FETCH, payload__url=target.normalized_url).exists())
 
     def test_shorter_path_requeues_a_url_skipped_for_depth(self):
         run = self._open('/quiet', max_depth=2, max_pages=10)

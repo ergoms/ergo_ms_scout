@@ -40,6 +40,15 @@ function blankForm() {
   }
 }
 
+function updateFirst(items = [], first) {
+  return [...(first ? [first] : []), ...items.slice(1)]
+}
+
+function updateRule(items, value) {
+  const pattern = value.trim()
+  return updateFirst(items, pattern ? { kind: items?.[0]?.kind || 'prefix', pattern } : null)
+}
+
 export function useScoutWorkflow() {
   const { t } = useAppI18n()
   const { state: query, patchState } = useRouteQueryState({
@@ -74,7 +83,7 @@ export function useScoutWorkflow() {
   let operation = 0
   let jobRequest = 0
   let runRequest = 0
-  let recordsRequest = 0
+  let recordsLoad = null
   let pollTimer = 0
   let disposed = false
   let draftVersion = 0
@@ -83,10 +92,16 @@ export function useScoutWorkflow() {
   function payload() {
     const f = form.value
     const cards = f.recordMode === 'cards'
-    const prefix = (value) => (value.trim() ? [{ kind: 'prefix', pattern: value.trim() }] : [])
+    const revision = savedRevision.value
+    const crawl = { ...revision?.crawl }
+    if (f.crawlMode === 'pages') {
+      delete crawl.page_types
+      delete crawl.sitemap_url
+      delete crawl.sitemap_from_robots
+    }
     return {
       title: f.title.trim(),
-      seed_urls: [f.url.trim()],
+      seed_urls: updateFirst(revision?.seed_urls, f.url.trim()),
       record:
         cards && f.recordSelector.trim()
           ? { kind: f.recordKind, selector: f.recordSelector.trim() }
@@ -97,20 +112,26 @@ export function useScoutWorkflow() {
         selector: field.selector.trim(),
         scope: cards && field.scope === 'record' ? 'record' : 'page',
         many: field.many,
+        ...(field.conversion ? { conversion: field.conversion } : {}),
       })),
       crawl: {
+        ...crawl,
         ...f.crawlLimits,
         mode: f.crawlMode,
-        preview_urls: f.previewUrl.trim() ? [f.previewUrl.trim()] : [],
+        preview_urls: updateFirst(crawl?.preview_urls, f.previewUrl.trim()),
         allowed_hosts: f.allowedHosts
           .split(',')
           .map((item) => item.trim())
           .filter(Boolean),
-        visit: prefix(f.visitPrefix),
-        extract_on: prefix(f.extractPrefix),
+        visit: updateRule(crawl?.visit, f.visitPrefix),
+        extract_on: updateRule(crawl?.extract_on, f.extractPrefix),
         max_depth: f.crawlDepth === '' ? 2 : Number(f.crawlDepth),
         max_pages: f.crawlPages === '' ? 50 : Number(f.crawlPages),
       },
+      ...(revision?.identity ? { identity: revision.identity } : {}),
+      ...(revision?.proxy_profile_revision_public_id
+        ? { proxy_profile_revision_public_id: revision.proxy_profile_revision_public_id }
+        : {}),
     }
   }
   const stamp = computed(() => JSON.stringify(payload()))
@@ -148,12 +169,14 @@ export function useScoutWorkflow() {
     () => records.value.length > 0 && EXPORTABLE_STATUSES.includes(run.value?.status),
   )
   const progress = computed(() => {
+    const records = run.value?.record_count || 0
+    if (run.value?.progress) return { ...run.value.progress, records }
     const tasks = Array.isArray(run.value?.tasks) ? run.value.tasks : []
     return {
       fetched: tasks.filter((task) => task.kind === 'fetch' && task.status === 'succeeded').length,
       extracted: tasks.filter((task) => task.kind === 'extract' && task.status === 'succeeded')
         .length,
-      records: run.value?.record_count || 0,
+      records,
       errors: tasks.filter((task) => task.status === 'failed').length,
     }
   })
@@ -192,11 +215,11 @@ export function useScoutWorkflow() {
           ? revision.fields.map((field) => ({ ...blankField(), ...field }))
           : [blankField()],
     }
-    applyingJob = false
     errors.fields = form.value.fields.map(() => '')
     loadedJob.value = job.public_id
     savedRevision.value = revision
     savedStamp.value = stamp.value
+    applyingJob = false
   }
 
   async function loadJob(publicId) {
@@ -234,32 +257,56 @@ export function useScoutWorkflow() {
     pollTimer = window.setTimeout(() => loadRun(query.value.run, true), 2000)
   }
 
-  async function loadRecords(publicId) {
-    const request = ++recordsRequest
+  function loadRecords(data) {
+    const publicId = data.public_id
+    const full = TERMINAL_STATUSES.includes(data.status)
+    const previous = recordsLoad?.publicId === publicId ? recordsLoad : null
+    if (previous?.full === full) return previous.promise
+
+    const load = { publicId, full }
     const owner = context
-    try {
-      const response = await apiClient.get(scoutEndpoints.records(publicId))
-      if (
-        disposed ||
-        owner !== context ||
-        request !== recordsRequest ||
-        query.value.run !== publicId
-      )
-        return
-      recordsError.value = !response.success
-      if (response.success)
-        records.value = Array.isArray(response.data.records) ? response.data.records : []
-    } catch (error) {
-      if (
-        disposed ||
-        owner !== context ||
-        request !== recordsRequest ||
-        query.value.run !== publicId
-      )
-        return
-      recordsError.value = true
-      logError('SCOUT: не удалось прочитать записи', error)
-    }
+    const current = () =>
+      !disposed && owner === context && recordsLoad === load && query.value.run === publicId
+    load.promise = (async () => {
+      // When a run finishes during a recent-records request, read the final pages after it.
+      await previous?.promise
+      if (!current()) return
+      try {
+        const rows = []
+        let cursor
+        do {
+          const params = full
+            ? { limit: 200, ...(cursor ? { cursor } : {}) }
+            : { limit: 20, order: 'recent' }
+          const response = await apiClient.get(scoutEndpoints.records(publicId), params)
+          if (!current()) return
+          recordsError.value = !response.success
+          if (!response.success) return
+          if (Array.isArray(response.data.records)) rows.push(...response.data.records)
+          cursor = full ? response.data.next_cursor : null
+        } while (cursor)
+        records.value = full ? rows : rows.reverse()
+      } catch (error) {
+        if (!current()) return
+        recordsError.value = true
+        logError('SCOUT: не удалось прочитать записи', error)
+      } finally {
+        if (recordsLoad === load) recordsLoad = null
+      }
+    })()
+    recordsLoad = load
+    return load.promise
+  }
+
+  function clearRecords() {
+    recordsLoad = null
+    records.value = []
+    recordsError.value = false
+  }
+
+  function refreshRecords(data) {
+    if (data.record_count) return loadRecords(data)
+    clearRecords()
   }
 
   function invalidateRunLoad() {
@@ -270,13 +317,11 @@ export function useScoutWorkflow() {
   function clearRun(updateQuery = true) {
     window.clearTimeout(pollTimer)
     invalidateRunLoad()
-    recordsRequest += 1
+    clearRecords()
     run.value = null
-    records.value = []
     returning.value = ''
     confirmationOpen.value = null
     connectionLost.value = false
-    recordsError.value = false
     if (updateQuery) patchState({ run: '' })
   }
 
@@ -304,36 +349,45 @@ export function useScoutWorkflow() {
         clearRun()
         editorStep.value = 'source'
       }
-      return
+      return false
     }
     run.value = data
     if (ACTIVE_STATUSES.includes(data.status)) schedulePoll()
+    return true
   }
 
   async function loadRun(publicId, quiet = false) {
     if (!publicId || disposed) return
+    window.clearTimeout(pollTimer)
     const request = ++runRequest
     const owner = context
+    const current = () =>
+      !disposed && request === runRequest && owner === context && query.value.run === publicId
     if (!quiet) runLoading.value = true
     try {
-      const response = await apiClient.get(scoutEndpoints.run(publicId))
-      if (disposed || request !== runRequest || owner !== context || query.value.run !== publicId)
-        return
+      let summary = quiet
+      let response = await apiClient.get(scoutEndpoints.run(publicId), summary ? { summary: 1 } : {})
+      if (!current()) return
+      if (summary && response.success && !ACTIVE_STATUSES.includes(response.data.status)) {
+        // The full response supplies the preview and the final journal once polling stops.
+        summary = false
+        response = await apiClient.get(scoutEndpoints.run(publicId))
+        if (!current()) return
+      }
       if (!response.success) {
         connectionLost.value = true
         schedulePoll()
         return
       }
       connectionLost.value = false
-      receiveRun(response.data)
-      if (query.value.run !== publicId) return
+      const data = summary ? { ...run.value, ...response.data } : response.data
+      if (!receiveRun(data)) return
       if (response.data.job_public_id && !query.value.job)
         patchState({ job: response.data.job_public_id })
-      if (response.data.record_count) await loadRecords(publicId)
-      else records.value = []
+      const recordsRead = refreshRecords(data)
+      if (!quiet) await recordsRead
     } catch (error) {
-      if (disposed || request !== runRequest || owner !== context || query.value.run !== publicId)
-        return
+      if (!current()) return
       connectionLost.value = true
       logError('SCOUT: не удалось прочитать запуск', error)
       schedulePoll()
@@ -371,51 +425,61 @@ export function useScoutWorkflow() {
     const currentOperation = ++operation
     const version = draftVersion
     const jobId = query.value.job
+    if (jobId && loadedJob.value !== jobId) return
     const previousRun = query.value.run
     busy.value = true
     pageError.value = ''
     try {
-      const body = payload()
-      const saved = jobId
-        ? await apiClient.patch(scoutEndpoints.job(jobId), body)
-        : await apiClient.post(scoutEndpoints.jobs, body)
+      let savedJobId = jobId
+      if (!jobId || dirty.value) {
+        const saved = jobId
+          ? await apiClient.patch(scoutEndpoints.job(jobId), payload())
+          : await apiClient.post(scoutEndpoints.jobs, payload())
+        if (
+          disposed ||
+          owner !== context ||
+          currentOperation !== operation ||
+          query.value.job !== jobId ||
+          query.value.run !== previousRun
+        )
+          return
+        if (!saved.success) {
+          pageError.value = saved.message || t('scout.flow.checkFailed')
+          return
+        }
+        if (version !== draftVersion) {
+          pageError.value = t('scout.workspace.draftKept')
+          return
+        }
+        applyJob(saved.data)
+        savedJobId = saved.data.public_id
+      }
+      await patchState({ job: savedJobId, run: '' })
       if (
         disposed ||
         owner !== context ||
         currentOperation !== operation ||
-        query.value.job !== jobId ||
-        query.value.run !== previousRun
+        query.value.job !== savedJobId ||
+        query.value.run
       )
         return
-      if (!saved.success) {
-        pageError.value = saved.message || t('scout.flow.checkFailed')
-        return
-      }
-      // The form stays editable during requests; never approve a response for a newer draft.
-      if (version !== draftVersion) {
-        pageError.value = t('scout.workspace.draftKept')
-        return
-      }
-      applyJob(saved.data)
-      await patchState({ job: saved.data.public_id, run: '' })
-      if (disposed || owner !== context || currentOperation !== operation) return
-      const explored = await apiClient.post(scoutEndpoints.explore(saved.data.public_id), {})
+      const explored = await apiClient.post(scoutEndpoints.explore(savedJobId), {})
       if (
         disposed ||
         owner !== context ||
         currentOperation !== operation ||
-        query.value.job !== saved.data.public_id
+        query.value.job !== savedJobId ||
+        query.value.run
       )
         return
       if (!explored.success) {
         pageError.value = explored.message || t('scout.flow.checkFailed')
         return
       }
-      records.value = []
+      clearRecords()
       confirmationOpen.value = false
       run.value = explored.data
       await patchState({ run: explored.data.public_id })
-      schedulePoll()
     } catch (error) {
       if (disposed || owner !== context || currentOperation !== operation) return
       pageError.value = t('scout.flow.checkFailed')
@@ -444,8 +508,7 @@ export function useScoutWorkflow() {
         return
       }
       connectionLost.value = false
-      receiveRun(response.data)
-      if (query.value.run === id && response.data.record_count) await loadRecords(id)
+      if (receiveRun(response.data)) refreshRecords(response.data)
     } catch (error) {
       if (disposed || owner !== context || currentOperation !== operation || query.value.run !== id)
         return
@@ -580,8 +643,7 @@ export function useScoutWorkflow() {
       window.clearTimeout(pollTimer)
       if (id !== previous) {
         invalidateRunLoad()
-        recordsRequest += 1
-        records.value = []
+        clearRecords()
         connectionLost.value = false
         if (run.value?.public_id !== id) run.value = null
       }

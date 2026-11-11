@@ -24,6 +24,7 @@ const fixture = {
   networkDown: false,
   deferNextRecords: false,
   releaseRecords: null,
+  deferPreview: false,
   pauseStatus: 'pausing',
   run: null,
   job: null,
@@ -33,8 +34,8 @@ const fixture = {
 }
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const result = (data) => ({ success: true, data: clone(data) })
-const rows = () =>
-  Array.from({ length: 25 }, (_, index) => ({
+const rows = (length = 25) =>
+  Array.from({ length }, (_, index) => ({
     public_id: `record-${index + 1}`,
     values: {
       title: { raw: `Событие ${index + 1}`, normalized: `Событие ${index + 1}` },
@@ -50,28 +51,44 @@ const rows = () =>
     ],
   }))
 
-apiClient.get = async (url) => {
-  fixture.calls.push(['get', url])
+apiClient.get = async (url, params = {}) => {
+  fixture.calls.push(['get', url, clone(params)])
   if (fixture.networkDown) throw new Error('Fixture network interruption')
   if (url.endsWith('/records/')) {
     if (fixture.deferNextRecords) {
       fixture.deferNextRecords = false
       await new Promise((resolve) => {
-        fixture.releaseRecords = resolve
+        fixture.releaseRecords = () => {
+          fixture.releaseRecords = null
+          resolve()
+        }
       })
     }
-    return result({ records: rows() })
+    const all = rows(fixture.run.record_count)
+    if (params.order === 'recent') all.reverse()
+    const first = params.cursor ? all.findIndex((row) => row.public_id === params.cursor) + 1 : 0
+    const records = all.slice(first, first + (params.limit ?? all.length))
+    return result({
+      records,
+      next_cursor: first + records.length < all.length ? records.at(-1).public_id : null,
+    })
   }
   if (url.startsWith('scout/jobs/')) return result(fixture.job)
-  if (url.startsWith('scout/runs/')) return result(fixture.run)
+  if (url.startsWith('scout/runs/')) {
+    if (!params.summary) return result(fixture.run)
+    const { journal: _journal, events: _events, tasks: _tasks, preview: _preview, ...summary } = fixture.run
+    return result({ ...summary, progress: { fetched: 1, extracted: 0, errors: 0 } })
+  }
   return result({})
 }
 apiClient.patch = async (url, body) => {
-  fixture.calls.push(['patch', url])
+  fixture.calls.push(['patch', url, clone(body)])
+  const publicId = url.split('/').at(-2)
+  const limits = fixture.job?.public_id === publicId ? fixture.job.revision.limits : undefined
   fixture.job = {
-    public_id: jobId,
+    public_id: publicId,
     title: body.title,
-    revision: { ...clone(body), plan_hash: 'fixture-plan', approved: false },
+    revision: { ...clone(body), limits, plan_hash: 'fixture-plan', approved: false },
   }
   return result(fixture.job)
 }
@@ -81,17 +98,17 @@ apiClient.post = async (url, body) => {
   if (url.endsWith('/explore/')) {
     fixture.run = {
       public_id: runId,
-      job_public_id: jobId,
-      plan_hash: 'fixture-plan',
+      job_public_id: fixture.job.public_id,
+      plan_hash: fixture.job.revision.plan_hash,
       approved: false,
-      status: 'awaiting_confirmation',
+      status: fixture.deferPreview ? 'exploring' : 'awaiting_confirmation',
       record_count: 0,
       snapshot_count: 1,
       preview: rows().slice(0, 3),
       tasks: [],
       events: [],
       journal: [],
-      crawl: { mode: 'pages' },
+      crawl: fixture.job.revision.crawl,
     }
     return result(fixture.run)
   }

@@ -42,13 +42,14 @@ from .page_types import ambiguous_type_error, effective_fields, matching_page_ty
 from .public_http import fetch_public_html, fetch_public_xml, fetch_public_text, public_url_allowed
 from .proxy_profiles import PROXY_RETRY_DELAYS
 from .fetch_failures import STOP_FETCH_FAILURES
-from .journal import append_event, describe_extract
+from .journal import append_event, append_events, describe_extract
 from .runs import advance_run, _finish_if_idle
 from .snapshot_store import read_snapshot_bytes, store_snapshot_bytes
 
 logger = logging.getLogger('celery.module.scout.tasks')
 DISPATCH_INTERLEAVE_ROUNDS = 1
 EXTRACT_WRITE_BATCH_SIZE = 500
+LEASE_LOST_MESSAGE = 'Исполнитель не подтвердил попытку'
 
 
 def inline_runner() -> bool:
@@ -130,6 +131,7 @@ def recover_expired_leases() -> int:
             locked.fencing_token = previous + 1
             locked.published_at = None
             locked.lease_until = None
+            locked.next_retry_at = None
             if run.status in (
                 RUN_CANCELLING,
                 RUN_CANCELLED,
@@ -138,9 +140,16 @@ def recover_expired_leases() -> int:
                 RUN_FAILED,
             ):
                 locked.status = TASK_CANCELLED
+            elif locked.attempt_count >= MAX_ATTEMPTS:
+                locked.status = TASK_FAILED
+                locked.error_code = 'lease_lost'
+                locked.error_message = LEASE_LOST_MESSAGE
             else:
                 locked.status = TASK_PENDING
-            locked.save(update_fields=['status', 'fencing_token', 'published_at', 'lease_until'])
+            locked.save(update_fields=[
+                'status', 'fencing_token', 'published_at', 'lease_until', 'next_retry_at',
+                'error_code', 'error_message',
+            ])
             Attempt.objects.filter(
                 task=locked,
                 fencing_token=previous,
@@ -148,9 +157,11 @@ def recover_expired_leases() -> int:
             ).update(
                 status=TASK_FAILED,
                 error_code='lease_lost',
-                error_message='Исполнитель не подтвердил попытку',
+                error_message=LEASE_LOST_MESSAGE,
                 finished_at=now,
             )
+            if locked.status == TASK_FAILED:
+                _note_terminal_task_failure(run, locked)
             advance_run(run)
             recovered += 1
     return recovered
@@ -251,7 +262,10 @@ def _claim(task_public_id: str, fencing_token: int):
                 task.save(update_fields=['published_at'])
                 return None
             from .crawl_budget import admit_fetch
+            previous_retry_at = task.next_retry_at
             if not admit_fetch(run, task):
+                if task.next_retry_at != previous_retry_at:
+                    _schedule_fetch_wakeup(run, task.next_retry_at, task.pk)
                 advance_run(run)
                 return None
         elif task.kind == TASK_SITEMAP:
@@ -323,20 +337,26 @@ def _fetch(task: Task, token: int) -> None:
             write_snapshot(relative)
 
     def write_snapshot(relative):
-        snapshot, _created = PageSnapshot.objects.get_or_create(
+        metadata = {
+            'final_url': result['final_url'],
+            'http_status': result['status'],
+            'content_path': relative,
+            'byte_size': len(result['body']),
+            'content_type': result['content_type'],
+            'charset': charset,
+            'has_crawl_links': links_present,
+        }
+        snapshot, created = PageSnapshot.objects.get_or_create(
             run=task.run,
             source_url=task.payload['url'],
             content_hash=digest,
-            defaults={
-                'final_url': result['final_url'],
-                'http_status': result['status'],
-                'content_path': relative,
-                'byte_size': len(result['body']),
-                'content_type': result['content_type'],
-                'charset': charset,
-                'has_crawl_links': links_present,
-            },
+            defaults=metadata,
         )
+        if not created and task.payload.get('crawl_public_id'):
+            # Повторная загрузка может получить те же байты по другому конечному адресу.
+            for field, value in metadata.items():
+                setattr(snapshot, field, value)
+            snapshot.save(update_fields=metadata)
         append_event(
             task.run_id,
             f'Страница скачана: HTTP {result["status"]}, {len(result["body"])} байт.',
@@ -375,24 +395,25 @@ def _extract(task: Task, token: int) -> None:
     )
     schema = revision.schema_revision
     rules = revision.rules_revision
+    lines = describe_extract(
+        body,
+        fields,
+        len(rows),
+        record=revision.record or None,
+        status=task.run.status,
+        approved=True,
+        content_type=snapshot.content_type,
+        charset=snapshot.charset,
+    )
+    if has_types and not rows:
+        lines.insert(0, 'Страница подходит под тип извлечения, но ни одна запись не найдена.')
 
     def write():
         if revision.identity:
             store_identity_rows(snapshot, revision, schema, rules, rows)
         else:
             _store_extracted_rows(snapshot, schema, rules, rows)
-        if has_types and not rows:
-            append_event(task.run_id, 'Страница подходит под тип извлечения, но ни одна запись не найдена.')
-        for line in describe_extract(
-            body,
-            fields,
-            len(rows),
-            status=task.run.status,
-            approved=True,
-            content_type=snapshot.content_type,
-            charset=snapshot.charset,
-        ):
-            append_event(task.run_id, line)
+        append_events(task.run_id, lines)
 
     _finish(task, token, write)
 
@@ -574,23 +595,42 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
         if locked.status == TASK_RETRY_WAIT:
             append_event(locked.run_id, 'Страница пока не записана, повторяем.')
         elif locked.status == TASK_FAILED:
-            if locked.kind == TASK_SITEMAP:
-                from .sitemap_scan import cancel_pending_maps
-                cancel_pending_maps(run)
-            append_event(locked.run_id, f'Шаг {locked.kind} не выполнен: {text}')
-            if locked.kind == TASK_FETCH:
-                from .frontier import mark_failed
-                mark_failed(run, (locked.payload or {}).get('url') or '')
+            _note_terminal_task_failure(run, locked)
         advance_run(locked.run)
 
 
-def _schedule_retry(run_public_id, delay: int) -> None:
+def _note_terminal_task_failure(run: Run, task: Task) -> None:
+    if task.kind == TASK_SITEMAP:
+        from .sitemap_scan import cancel_pending_maps
+        cancel_pending_maps(run)
+    append_event(run.pk, f'Шаг {task.kind} не выполнен: {task.error_message}')
+    if task.kind == TASK_FETCH:
+        from .frontier import mark_failed
+        mark_failed(run, (task.payload or {}).get('url') or '')
+
+
+def _schedule_fetch_wakeup(run: Run, due_at, task_id: int) -> None:
+    if inline_runner():
+        return
+    if not run.tasks.filter(
+        kind=TASK_FETCH,
+        status__in=(TASK_PENDING, TASK_RETRY_WAIT),
+        next_retry_at=due_at,
+    ).exclude(pk=task_id).exists():
+        delay = max(0, (due_at - timezone.now()).total_seconds())
+        _schedule_retry(run.public_id, delay)
+
+
+def _schedule_retry(run_public_id, delay: float) -> None:
     run_id = str(run_public_id)
 
     def _go():
         from ..tasks import dispatch_scout_pending
 
-        dispatch_scout_pending.apply_async(args=[run_id], countdown=max(delay, 1))
+        try:
+            dispatch_scout_pending.apply_async(args=[run_id], countdown=delay)
+        except Exception:
+            logger.exception('SCOUT не поставил отложенную сверку запуска %s в очередь', run_id)
 
     transaction.on_commit(_go)
 

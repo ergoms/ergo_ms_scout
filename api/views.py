@@ -212,8 +212,13 @@ class RunRecordsView(BaseAPIView):
             typed = use_typed_values(request.query_params.get('value_format'))
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))
-        records = run.records.order_by('created_at', 'pk')
-        if 'limit' not in request.query_params and 'cursor' not in request.query_params:
+        order = request.query_params.get('order', 'oldest')
+        if order not in ('oldest', 'recent'):
+            exc = ScoutError('invalid_order', _('Порядок записей: oldest или recent.'))
+            return Response(error_payload(exc), status=error_status(exc))
+        recent = order == 'recent'
+        records = run.records.order_by(*(['-created_at', '-pk'] if recent else ['created_at', 'pk']))
+        if not recent and 'limit' not in request.query_params and 'cursor' not in request.query_params:
             return Response({'records': [
                 record_payload(item, typed=typed) for item in records_with_evidence(records, typed=typed)
             ]})
@@ -232,8 +237,10 @@ class RunRecordsView(BaseAPIView):
             except (ValueError, records.model.DoesNotExist):
                 exc = ScoutError('invalid_cursor', _('Курсор не соответствует записи этого сбора.'))
                 return Response(error_payload(exc), status=error_status(exc))
-            records = records.filter(created_at__gte=after.created_at).filter(
-                Q(created_at__gt=after.created_at) | Q(pk__gt=after.pk),
+            boundary = 'lt' if recent else 'gt'
+            records = records.filter(
+                Q(**{f'created_at__{boundary}': after.created_at})
+                | Q(created_at=after.created_at, **{f'pk__{boundary}': after.pk}),
             )
 
         page = list(records_with_evidence(records, typed=typed)[:limit + 1])

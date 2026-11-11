@@ -80,15 +80,14 @@ def _write_csv(records, output) -> None:
     for values in records.values_list('values', flat=True).iterator(chunk_size=EXPORT_BATCH_SIZE):
         renew_read_leases()
         names.update(dict.fromkeys(values or {}))
-    writer = csv.DictWriter(output, fieldnames=['public_id', *names])
-    writer.writeheader()
+    writer = csv.writer(output)
+    columns = ['field.public_id' if name == 'public_id' else name for name in names]
+    writer.writerow(['public_id', *columns])
     for record in records.iterator(chunk_size=EXPORT_BATCH_SIZE):
         renew_read_leases()
-        row = {'public_id': str(record.public_id)}
-        for name in names:
-            cell = (record.values or {}).get(name) or {}
-            row[name] = cell.get('normalized', '')
-        writer.writerow(row)
+        values = record.values or {}
+        cells = [(values.get(name) or {}).get('normalized', '') for name in names]
+        writer.writerow([str(record.public_id), *cells])
 
 
 def _write_typed_csv(records, fields, output) -> None:

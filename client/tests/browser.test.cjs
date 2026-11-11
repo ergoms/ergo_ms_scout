@@ -133,13 +133,24 @@ async function main() {
     await ui.getByRole('button', { name: 'Продолжить', exact: true }).waitFor()
     await ui.getByRole('button', { name: 'Продолжить', exact: true }).click()
 
-    await page.evaluate(() => window.__scoutTest.setStatus('completed'))
+    await page.evaluate(() => {
+      window.__scoutTest.run.record_count = 205
+      window.__scoutTest.setStatus('completed')
+    })
     await ui.getByRole('heading', { name: 'Завершён', exact: true }).waitFor()
     await ui
       .getByRole('button', { name: 'Происхождение поля «title»: Событие 1', exact: true })
       .click()
     await ui.getByRole('heading', { name: 'Откуда взялось значение: title' }).waitFor()
     assert.match(await ui.locator('.scout-evidence').innerText(), /events\.example/)
+    assert.deepEqual(
+      await page.evaluate(() =>
+        window.__scoutTest.calls
+          .filter(([method, url, params]) => method === 'get' && url.endsWith('/records/') && params.order !== 'recent')
+          .map(([, , params]) => params),
+      ),
+      [{ limit: 200 }, { limit: 200, cursor: 'record-200' }],
+    )
     assert.equal(
       await ui.getByRole('button', { name: 'Происхождение поля «count»: 0', exact: true }).count(),
       10,
@@ -188,6 +199,12 @@ async function main() {
         ...fixture.job.revision,
         plan_hash: 'multi-source-plan',
         seed_urls: ['https://events.example/a', 'https://events.example/b'],
+        fields: [
+          ...fixture.job.revision.fields,
+          { name: 'count', kind: 'css', selector: '.count', scope: 'page', many: false, conversion: { type: 'integer' } },
+        ],
+        identity: { kind: 'sku', namespace: 'events', field: 'title' },
+        proxy_profile_revision_public_id: '66666666-6666-4666-8666-666666666666',
         limits: { max_bytes: 1000000, timeout_seconds: 20 },
         crawl: {
           ...fixture.job.revision.crawl,
@@ -203,6 +220,7 @@ async function main() {
           ],
           preview_urls: ['https://events.example/sample-a', 'https://events.example/sample-b'],
           drop_query: ['tracking_id'],
+          sitemap_url: 'https://events.example/sitemap.xml',
         },
       }
       fixture.job = { ...fixture.job, public_id: jobId, revision }
@@ -247,10 +265,53 @@ async function main() {
     )
     await checkWidths('confirm-multi-source')
 
-    // An immediate pause supersedes the run load while its records request is pending.
+    // Previewing an unchanged saved job reuses its revision and fetches the full preview.
+    await ui.getByRole('button', { name: 'К предпросмотру', exact: true }).click()
+    await ui.getByRole('button', { name: 'Изменить правила', exact: true }).click()
+    await page.evaluate(() => {
+      window.__scoutTest.calls.length = 0
+      window.__scoutTest.deferPreview = true
+    })
+    const prepare = ui.getByRole('button', { name: 'Получить предпросмотр', exact: true })
+    await prepare.click()
+    await page.waitForFunction(() => window.__scoutTest.calls.some(([, , params]) => params?.summary === 1))
+    await page.evaluate(() => {
+      window.__scoutTest.setStatus('awaiting_confirmation')
+      window.__scoutTest.deferPreview = false
+    })
+    await ui.getByRole('button', { name: 'К подтверждению', exact: true }).waitFor()
+    assert.equal(
+      await page.evaluate(() => window.__scoutTest.calls.filter(([method]) => method === 'patch').length),
+      0,
+    )
+
+    await ui.getByRole('button', { name: 'Изменить правила', exact: true }).click()
+    await ui.locator('.scout-crawl-editor > summary').click()
+    await ui.locator('#scout-visit').fill('featured-updated')
+    await prepare.click()
+    await ui.getByRole('button', { name: 'К подтверждению', exact: true }).waitFor()
+    const changed = await page.evaluate(() => window.__scoutTest.calls.find(([method]) => method === 'patch')[2])
+    assert.deepEqual(changed.seed_urls, ['https://events.example/a', 'https://events.example/b'])
+    assert.deepEqual(changed.crawl.visit, [
+      { kind: 'contains', pattern: 'featured-updated' },
+      { kind: 'prefix', pattern: 'https://events.example/b' },
+    ])
+    assert.deepEqual(changed.crawl.extract_on, [
+      { kind: 'prefix', pattern: 'https://events.example/a' },
+      { kind: 'contains', pattern: 'ticket' },
+    ])
+    assert.deepEqual(changed.crawl.preview_urls, ['https://events.example/sample-a', 'https://events.example/sample-b'])
+    assert.deepEqual(changed.crawl.drop_query, ['tracking_id'])
+    assert.equal(changed.crawl.sitemap_url, 'https://events.example/sitemap.xml')
+    assert.deepEqual(changed.fields[1].conversion, { type: 'integer' })
+    assert.deepEqual(changed.identity, { kind: 'sku', namespace: 'events', field: 'title' })
+    assert.equal(changed.proxy_profile_revision_public_id, '66666666-6666-4666-8666-666666666666')
+
+    // Status polling continues without starting a second request for the recent records.
     await page.evaluate(() => {
       const fixture = window.__scoutTest
       const runId = '55555555-5555-4555-8555-555555555555'
+      fixture.calls.length = 0
       fixture.deferNextRecords = true
       fixture.pauseStatus = 'paused'
       fixture.run = { ...fixture.run, public_id: runId, status: 'running', record_count: 25 }
@@ -258,9 +319,23 @@ async function main() {
     })
     await page.waitForFunction(() => window.__scoutTest.releaseRecords !== null)
     assert.equal(await ui.getAttribute('aria-busy'), 'true')
+    await page.waitForFunction(() => window.__scoutTest.calls.some(([, , params]) => params?.summary === 1))
+    assert.deepEqual(
+      await page.evaluate(() =>
+        window.__scoutTest.calls
+          .filter(([method, url]) => method === 'get' && url.endsWith('/records/'))
+          .map(([, , params]) => params),
+      ),
+      [{ limit: 20, order: 'recent' }],
+    )
     await ui.getByRole('button', { name: 'Пауза', exact: true }).click()
     await ui.getByRole('button', { name: 'Продолжить', exact: true }).waitFor()
     await page.evaluate(() => window.__scoutTest.releaseRecords())
+    await ui.getByText('Последние 20 из 25', { exact: true }).waitFor()
+    assert.equal(
+      await ui.getByRole('button', { name: 'Происхождение поля «title»: Событие 1', exact: true }).count(),
+      0,
+    )
     await page.waitForFunction(
       () => document.querySelector('.scout-workflow')?.getAttribute('aria-busy') === 'false',
     )

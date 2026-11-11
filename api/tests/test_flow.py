@@ -461,6 +461,13 @@ class FlowTests(TestCase):
         self.assertEqual(first['records'] + second['records'], full['records'])
         self.assertEqual(first['next_cursor'], first['records'][0]['public_id'])
         self.assertIsNone(second['next_cursor'])
+        latest = client.get(path + 'records/', {'order': 'recent', 'limit': 1}).data
+        previous = client.get(path + 'records/', {
+            'order': 'recent', 'limit': 1, 'cursor': latest['next_cursor'],
+        }).data
+        self.assertEqual(latest['records'] + previous['records'], full['records'][::-1])
+        self.assertIsNone(previous['next_cursor'])
+        self.assertEqual(client.get(path + 'records/', {'order': 'invalid'}).data['code'], 'invalid_order')
         self.assertEqual(client.get(path + 'records/', {'limit': 201}).data['code'], 'invalid_limit')
         self.assertEqual(client.get(path + 'records/', {'cursor': str(uuid4())}).data['code'], 'invalid_cursor')
 
@@ -469,7 +476,13 @@ class FlowTests(TestCase):
         self.assertEqual(summary['status'], RUN_COMPLETED)
         self.assertEqual(summary['record_count'], 2)
         self.assertEqual(summary['snapshot_count'], 1)
+        self.assertEqual(summary['progress'], {'fetched': 1, 'extracted': 1, 'errors': 0})
         self.assertTrue({'journal', 'events', 'preview', 'tasks'}.isdisjoint(summary))
+        with patch('modules.scout.api.services.journal.read_snapshot_bytes') as read_snapshot:
+            details = client.get(path)
+        self.assertEqual(details.status_code, 200)
+        read_snapshot.assert_not_called()
+        self.assertTrue(any('совпадений' in line for line in details.data['journal']))
 
     def test_data001_preview_records_and_exports_keep_both_formats(self):
         client = APIClient()

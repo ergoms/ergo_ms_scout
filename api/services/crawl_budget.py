@@ -55,16 +55,17 @@ def admit_fetch(run, task) -> bool:
     if available <= 0:
         stop_fetches(run, 'bytes')
         return False
-    # Outstanding claims reserve their response allowance across all workers.
-    reserved = sum(int(payload.get('byte_allowance') or run.job_revision.limits['max_bytes'])
+    page_limit = run.job_revision.limits['max_bytes']
+    allowance = min(available, page_limit)
+    # Временные резервы не уменьшают допустимый размер нового ответа.
+    reserved = sum(int(payload.get('byte_allowance') or page_limit)
                    for payload in Task.objects.filter(run=run, kind=TASK_FETCH, status=TASK_LEASED)
                    .values_list('payload', flat=True))
-    available -= reserved
-    if available <= 0:
+    if available - reserved < allowance:
         task.published_at = None
         task.save(update_fields=['published_at'])
         return False
-    task.payload = dict(task.payload, byte_allowance=min(available, run.job_revision.limits['max_bytes']))
+    task.payload = dict(task.payload, byte_allowance=allowance)
     task.save(update_fields=['payload'])
     return True
 
@@ -88,7 +89,7 @@ def reconcile(run) -> None:
             row.state = 'queued'
             row.save(update_fields=['state'])
         elif task.status == 'succeeded':
-            snapshot = PageSnapshot.objects.filter(run=run, source_url=task.payload.get('url')).first()
+            snapshot = PageSnapshot.objects.filter(run=run, source_url=task.payload.get('url')).order_by('-fetched_at', '-pk').first()
             if snapshot:
                 note_fetch(run, snapshot)
         elif task.status in ('failed', 'cancelled'):

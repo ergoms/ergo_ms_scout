@@ -155,5 +155,5 @@ def install_worker():
     wrap_stage(crawl_budget, 'reconcile', 'reconcile')
     wrap_stage(frontier, 'discover', 'discover')
     wrap_stage(frontier, 'iter_hrefs', 'iter_hrefs')
-    wrap_stage(journal, 'selector_match_count', 'journal_match')
+    wrap_stage(journal, '_nodes', 'journal_match')
     wrap_stage(Celery, 'send_task', 'broker_publish')

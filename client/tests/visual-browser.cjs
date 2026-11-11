@@ -28,7 +28,7 @@ module.exports = async function checkVisual(browser, output) {
     await frame.locator('p').first().click()
     await ui.getByText('Совпадений в примерах: 20', { exact: true }).waitFor()
     assert.equal(await ui.locator('#scout-visual-css').inputValue(), '.price_color')
-    assert.ok((await ui.locator('.scout-snapshot-highlights rect').count()) >= 20)
+    await ui.locator('.scout-snapshot-highlights rect').nth(19).waitFor()
 
     await ui.locator('#scout-visual-css').fill('.absent')
     await ui.getByRole('button', { name: 'Проверить CSS', exact: true }).click()

@@ -81,7 +81,10 @@ const shownRecords = computed(() =>
 )
 const shownPreview = computed(() => previewRows.value.slice(0, 20))
 const sidebarPlan = computed(() => (stage.value === 'confirm' ? confirmationPlan.value : payload()))
-const journal = computed(() => [...(run.value?.journal || []), ...(run.value?.events || [])])
+const journal = computed(() => {
+  const lines = run.value?.journal || []
+  return [...lines, ...(run.value?.events || []).filter((line) => !lines.includes(line))]
+})
 const gaps = computed(() =>
   shownPreview.value.reduce(
     (count, row) =>
@@ -406,7 +409,7 @@ function openSystemSettings() {
             </p>
             <template v-else
               ><h3 class="h6 mt-4">
-                {{ t('scout.flow.recent', { shown: shownRecords.length, total: records.length }) }}
+                {{ t('scout.flow.recent', { shown: shownRecords.length, total: progress.records }) }}
               </h3>
               <ScoutRecordsTable :records="shownRecords" preview
             /></template>
@@ -503,6 +506,7 @@ function openSystemSettings() {
         <details
           v-if="run && (journal.length || run.crawl?.mode === 'site')"
           class="scout-execution-details"
+          @toggle="stage === 'collect' && $event.target.open && reload()"
         >
           <summary>{{ t('scout.flow.details') }}</summary>
           <ScoutCrawlSummary

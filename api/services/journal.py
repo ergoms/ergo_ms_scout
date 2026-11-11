@@ -7,29 +7,34 @@ from django.utils import timezone
 
 from ..models import Run
 from .constants import RUN_AWAITING, RUN_EXPLORING, RUN_RUNNING
-from .html_extract import decode_html, selector_match_count
+from .errors import ScoutError
+from .html_extract import _containers, _nodes, _parse, decode_html
 from .snapshot_store import read_snapshot_bytes
 
 _ID = re.compile(r'''@id\s*=\s*["']([^"']+)["']''')
 
 
 def append_event(run_id, message: str) -> None:
-    text = (message or '').strip()
-    if not text:
+    append_events(run_id, (message,))
+
+
+def append_events(run_id, messages) -> None:
+    timestamp = timezone.now().isoformat(timespec='seconds')
+    entries = [
+        {'at': timestamp, 'message': text[:500]}
+        for message in messages if (text := (message or '').strip())
+    ]
+    if not entries:
         return
     with transaction.atomic():
         run = Run.objects.select_for_update().get(pk=run_id)
         events = list(run.events or [])
-        events.append({
-            'at': timezone.now().isoformat(timespec='seconds'),
-            'message': text[:500],
-        })
-        run.events = events[-100:]
+        run.events = (events + entries)[-100:]
         run.save(update_fields=['events'])
 
 
 def journal_lines(run: Run) -> list[str]:
-    if not (run.job_revision.crawl or {}).get('page_types') and run.snapshots.exists():
+    if run.status == RUN_AWAITING and not (run.job_revision.crawl or {}).get('page_types'):
         return _diagnose(run)
     stored = stored_messages(run)
     if stored:
@@ -54,21 +59,31 @@ def describe_extract(
     rules: list[dict],
     row_count: int,
     *,
+    record=None,
     status: str = '',
     approved: bool = False,
     content_type: str = '',
     charset: str = '',
 ) -> list[str]:
     text = decode_html(body, content_type, charset)
+    outcome = _outcome(status, approved, row_count)
+    try:
+        root = _parse(body, content_type, charset)
+        cards = _containers(root, record) or []
+    except ScoutError as exc:
+        return [f'Снимок не разобран: {exc}.', outcome]
     lines = []
     for rule in rules or []:
         name = rule.get('name') or 'field'
         kind = rule.get('kind') or 'css'
         selector = rule.get('selector') or ''
-        scope = 'в карточке' if rule.get('scope') == 'record' else 'на странице'
+        relative = rule.get('scope') == 'record'
+        scope = 'в карточке' if relative else 'на странице'
         try:
-            count = selector_match_count(body, rule, content_type, charset)
-        except Exception as exc:
+            count = sum(len(_nodes(card, rule, relative=True)) for card in cards) if relative else len(
+                _nodes(root, rule, relative=False),
+            )
+        except ScoutError as exc:
             lines.append(f'Поле {name}: селектор не применился ({exc}).')
             continue
         repeat = 'несколько значений' if rule.get('many') else 'одно значение'
@@ -79,7 +94,7 @@ def describe_extract(
                     f'В сохранённой странице нет id="{element_id}". '
                     'Такой блок часто появляется только после скриптов, а скачан исходный HTML.'
                 )
-    lines.append(_outcome(status, approved, row_count))
+    lines.append(outcome)
     return lines
 
 
@@ -98,6 +113,7 @@ def _outcome(status: str, approved: bool, row_count: int) -> str:
 def _diagnose(run: Run) -> list[str]:
     lines = []
     rules = run.job_revision.fields or []
+    approved = _approved(run)
     snapshots = list(run.snapshots.all())
     if not snapshots:
         lines.append('Сохранённой страницы нет.')
@@ -115,12 +131,11 @@ def _diagnose(run: Run) -> list[str]:
             continue
         if len(body) != snapshot.byte_size:
             lines.append(f'После распаковки {len(body)} байт.')
-        approved = _approved(run)
-        row_count = run.records.filter(snapshot=snapshot).count()
         lines.extend(describe_extract(
             body,
             rules,
-            row_count,
+            0,
+            record=run.job_revision.record or None,
             status=run.status,
             approved=approved,
             content_type=snapshot.content_type,

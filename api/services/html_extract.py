@@ -5,7 +5,7 @@ import json
 import re
 
 from lxml import html as lxml_html
-from lxml.etree import XPathError
+from lxml.etree import XPathError, _Comment, _ProcessingInstruction
 
 from ..contracts.envelope import PROTOCOL_VERSION, build_extract_request
 from .constants import EXTRACTOR_ID, EXTRACTOR_VERSION, FIELD_TEXT_LIMIT
@@ -63,11 +63,6 @@ def extract_html(body: bytes, rules: list[dict], record=None, content_type: str 
         ).hexdigest()[:64]
         rows.append({'identity_key': identity, 'values': values, 'evidence': evidence})
     return rows
-
-
-def selector_match_count(body: bytes, rule: dict, content_type: str = '', charset: str = '') -> int:
-    root = _parse(body, content_type, charset)
-    return len(_texts(root, rule, relative=False))
 
 
 def check_plan_selectors(body: bytes, rules: list[dict], record, *, charset: str = '') -> tuple[str, str] | None:
@@ -154,7 +149,7 @@ def _containers(root, record):
     nodes = _nodes(root, {'kind': record.get('kind') or 'css', 'selector': record['selector']}, relative=False)
     elements = []
     for node in nodes:
-        if not hasattr(node, 'xpath'):
+        if not isinstance(getattr(node, 'tag', None), str):
             raise ScoutError('selector', 'Селектор карточки должен находить элементы страницы')
         elements.append(node)
     return elements
@@ -221,10 +216,6 @@ def _put(values, evidence, rule, cell, index: int, *, typed_evidence: bool) -> N
         })
 
 
-def _texts(root, rule: dict, *, relative: bool) -> list[str]:
-    return [_node_text(node) for node in _nodes(root, rule, relative=relative)]
-
-
 def _nodes(root, rule: dict, *, relative: bool, raw_result: bool = False):
     kind = rule['kind']
     selector = rule['selector']
@@ -259,6 +250,11 @@ def _node_text(node) -> str:
         return node
     if isinstance(node, (int, float, bool)):
         return _coerce(node)[0]
+    if isinstance(node, (_Comment, _ProcessingInstruction)):
+        return node.text or ''
+    if isinstance(node, tuple):
+        # XPath возвращает узел пространства имён как (префикс, URI).
+        return node[1]
     return node.text_content() or ''
 
 
