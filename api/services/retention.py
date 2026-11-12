@@ -178,7 +178,7 @@ def build_manifest(owner, policy, selection, at):
             if reason:
                 excluded.append(_item('results', run, run, reason=reason))
             else:
-                exports = list(run.exports.filter(availability='available').order_by('public_id'))
+                exports = run.exports.exclude(availability='expired').order_by('public_id')
                 export_specs = [_export_spec(item, run) for item in exports]
                 spec = _item('results', run, run, records=run.records.count(),
                              evidence=Evidence.objects.filter(record__run=run).count(),
@@ -195,7 +195,7 @@ def build_manifest(owner, policy, selection, at):
                 if reason:
                     excluded.append(_item('exports', artifact, run, reason=reason))
                 else:
-                    refs = ExportArtifact.objects.filter(storage_path=artifact.storage_path, availability='available')
+                    refs = ExportArtifact.objects.filter(storage_path=artifact.storage_path).exclude(availability='expired')
                     if refs.exclude(run=run).exists() or refs.filter(
                         created_at__gt=at - timedelta(days=policy.export_days),
                     ).exists():
@@ -253,12 +253,17 @@ def _export_spec(artifact, run):
     try:
         path = _media_path(artifact)
         size = get_media_client().size(path)
+    except FileNotFoundError:
+        if artifact.availability == 'purging':
+            size = 0
+        else:
+            executable = False
     except Exception:
         executable = False
     return _item('exports', artifact, run, path=artifact.storage_path, bytes=size, executable=executable,
                  refs=sorted(str(value) for value in ExportArtifact.objects.filter(
-                     storage_path=artifact.storage_path, availability='available',
-                 ).values_list('public_id', flat=True)))
+                     storage_path=artifact.storage_path,
+                 ).exclude(availability='expired').values_list('public_id', flat=True)))
 
 
 def _media_path(artifact):
@@ -341,7 +346,7 @@ def public_item(item):
         'kind', 'public_id', 'run_public_id', 'reason', 'records', 'evidence', 'bytes', 'executable',
         'eligible_at',
     )} | ({'comparison_will_expire': True, 'export_files': len({row['path'] for row in item['exports']})}
-         if item['kind'] == 'results' else {})
+         if item['kind'] == 'results' and 'exports' in item else {})
 
 
 def accept_cleanup(owner, data, *, trigger='manual'):
@@ -442,7 +447,6 @@ def process_cleanup(public_id):
 
 def _step(cleanup, item):
     spec = item.specification
-    policy = policy_for(cleanup.user_public_id)
     run = (Run.objects.select_related('job_revision').filter(
         public_id=spec['run_public_id'], user_public_id=cleanup.user_public_id,
     ).first() if spec['run_public_id'] else None)
@@ -457,12 +461,13 @@ def _step(cleanup, item):
     with resource_lock(resource, wait=False) as acquired:
         if not acquired:
             return True, 'operation_in_progress'
+        if spec['kind'] == 'html':
+            return _purge_html(cleanup, item)
+        policy = policy_for(cleanup.user_public_id)
         if run:
             run.refresh_from_db()
         # Начатое намерение доводим до конца даже после правки политики.
         started = (run is not None and spec['kind'] == 'results' and run.results_availability == 'purging')
-        if spec['kind'] == 'html':
-            started = PageSnapshot.objects.filter(public_id__in=spec['refs'], html_availability='purging').exists()
         if spec['kind'] == 'exports':
             started = ExportArtifact.objects.filter(public_id=spec['public_id'], availability='purging').exists()
         if policy.version != cleanup.preview.policy_version and not started:
@@ -471,8 +476,6 @@ def _step(cleanup, item):
             reason = protection(run, spec['kind'], policy)
             if reason:
                 return True, reason
-        if spec['kind'] == 'html':
-            return _purge_html(cleanup, item, policy)
         if spec['kind'] == 'exports':
             _purge_export(spec, item)
             return True, ''
@@ -491,7 +494,7 @@ def _progress(item, *, rows=0, size=0):
     item.save(update_fields=['deleted_rows', 'deleted_bytes'])
 
 
-def _purge_html(cleanup, item, policy):
+def _purge_html(cleanup, item):
     from contextlib import ExitStack
     from .snapshot_store import safe_snapshot_path
     spec = item.specification
@@ -506,18 +509,27 @@ def _purge_html(cleanup, item, policy):
         if any(row.content_path != spec['path'] for row in refs):
             raise ValueError('snapshot reference path changed')
         with ExitStack() as stack:
-            for run in sorted({row.run_id: row.run for row in refs}.values(), key=lambda value: value.pk):
+            runs = sorted({row.run_id: row.run for row in refs}.values(), key=lambda run: run.pk)
+            for run in runs:
                 if run.user_public_id != cleanup.user_public_id:
                     return True, 'shared_blob'
                 if not stack.enter_context(resource_lock(f'run:{run.pk}', wait=False)):
                     return True, 'operation_in_progress'
-                run.refresh_from_db()
-                if reason := protection(run, 'html', policy):
-                    return True, reason
             path = safe_snapshot_path(spec['path'])
             if path.name != spec['content_hash'] + '.html':
                 raise ValueError('snapshot filename mismatches hash')
-            PageSnapshot.objects.filter(pk__in=[row.pk for row in refs]).update(html_availability='purging')
+            with transaction.atomic():
+                policy, _created = RetentionPolicy.objects.select_for_update().get_or_create(
+                    user_public_id=cleanup.user_public_id,
+                )
+                started = all(row.html_availability == 'purging' for row in refs)
+                if policy.version != cleanup.preview.policy_version and not started:
+                    return True, 'policy_changed'
+                for run in runs:
+                    run.refresh_from_db()
+                    if reason := protection(run, 'html', policy):
+                        return True, reason
+                PageSnapshot.objects.filter(pk__in=[row.pk for row in refs]).update(html_availability='purging')
             # Намерение уже в БД. Отсутствие после падения между unlink и update — успех.
             path.unlink(missing_ok=True)
             with transaction.atomic():
@@ -558,8 +570,8 @@ def _purge_results(run, item):
     if run.results_availability == 'expired':
         return True, ''
     if run.results_availability == 'available':
-        current = sorted(str(value) for value in run.exports.filter(availability='available').values_list('public_id', flat=True))
-        if current != sorted(row['public_id'] for row in spec['exports']):
+        current = run.exports.exclude(availability='expired').values_list('public_id', flat=True)
+        if {str(value) for value in current} - {row['public_id'] for row in spec['exports']}:
             return True, 'exports_changed'
         with transaction.atomic():
             Job.objects.select_for_update().get(pk=run.job_revision.job_id)
@@ -579,6 +591,8 @@ def _purge_results(run, item):
         for export in remaining[:BATCH_SIZE]:
             _purge_export(export, item)
         return False, ''
+    if run.exports.exclude(availability='expired').exists():
+        raise ValueError('result manifest omits a pending export')
     ids = list(Evidence.objects.filter(record__run=run).values_list('pk', flat=True)[:BATCH_SIZE])
     if ids:
         with transaction.atomic():
@@ -630,16 +644,26 @@ def sweep_retention():
                 continue
             policy.refresh_from_db()
             day = timezone.now().date()
-            if policy.last_automatic_date == day:
+            if not policy.automatic_enabled or policy.last_automatic_date == day:
                 continue
-            preview = create_preview(policy.user_public_id, {'policy_version': policy.version, 'scopes': list(SCOPES)})
-            if not preview.summary['executable']:
-                continue
-            with transaction.atomic():
-                accept_cleanup(policy.user_public_id, {
-                    'preview_public_id': str(preview.public_id), 'manifest_hash': preview.manifest_hash,
-                    'idempotency_key': str(uuid5(NAMESPACE_URL, f'scout-retention:{policy.user_public_id}:{day}')),
-                }, trigger='automatic')
-                RetentionPolicy.objects.filter(pk=policy.pk).update(last_automatic_date=day)
+            try:
+                with transaction.atomic():
+                    preview = create_preview(policy.user_public_id, {
+                        'policy_version': policy.version, 'scopes': list(SCOPES),
+                    })
+                    claimed = RetentionPolicy.objects.filter(
+                        pk=policy.pk, version=preview.policy_version, automatic_enabled=True,
+                    ).update(last_automatic_date=day)
+                    if not claimed:
+                        preview.delete()
+                        continue
+                    if preview.summary['executable']:
+                        accept_cleanup(policy.user_public_id, {
+                            'preview_public_id': str(preview.public_id), 'manifest_hash': preview.manifest_hash,
+                            'idempotency_key': str(uuid5(NAMESPACE_URL, f'scout-retention:{policy.user_public_id}:{day}')),
+                        }, trigger='automatic')
+            except ScoutError as exc:
+                if exc.code not in ('retention_policy_changed', 'cleanup_preview_changed'):
+                    raise
     for cleanup_id in RetentionCleanup.objects.exclude(status='completed').values_list('public_id', flat=True):
         enqueue_cleanup(cleanup_id)

@@ -417,6 +417,12 @@ class FlowTests(TestCase):
         publish_ready(str(run.public_id))
         run.refresh_from_db()
 
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        invalid = client.post(f'/api/scout/runs/{run.public_id}/export/', [], format='json')
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+        self.assertEqual((invalid.data['code'], invalid.data['path']), ('invalid', '/'))
+
         class Storage:
             def commit_local(self, local_path, path):
                 self.path = path
@@ -577,6 +583,75 @@ class FlowTests(TestCase):
         started = client.post(f"/api/scout/runs/{explored.data['public_id']}/start/", {}, format='json')
         self.assertEqual(started.status_code, 409)
         self.assertEqual(started.data['code'], 'approval_required')
+
+    def test_job_writes_reject_invalid_json_shapes(self):
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        job = self._job()
+        valid = {'title': 'Каталог', 'seed_urls': [self.url], 'fields': FIELDS, 'record': RECORD}
+        invalid = [
+            ([], '/'),
+            ({**valid, 'title': 17}, '/title'),
+            ({**valid, 'seed_urls': 17}, '/seed_urls'),
+            ({**valid, 'fields': 17}, '/fields'),
+            ({**valid, 'crawl': {'allowed_hosts': 17}}, '/crawl/allowed_hosts'),
+            ({**valid, 'crawl': {'mode': 'site', 'visit': 17}}, '/crawl/visit'),
+        ]
+        for write, url in ((client.post, '/api/scout/jobs/'), (client.patch, f'/api/scout/jobs/{job.public_id}/')):
+            for body, path in invalid:
+                with self.subTest(method=write.__name__, path=path):
+                    response = write(url, body, format='json')
+                    self.assertEqual(response.status_code, 400, response.data)
+                    self.assertEqual((response.data['code'], response.data['path']), ('invalid', path))
+        self.assertEqual(Job.objects.count(), 1)
+        self.assertEqual(job.revisions.count(), 1)
+
+    def test_manual_preview_selector_error_blocks_approval_and_start(self):
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        job = create_job(
+            user_public_id=self.user.public_id, title='Каталог', seed_urls=[self.url],
+            fields=[{'name': 'price', 'kind': 'css', 'selector': '.price['}],
+        )
+        run = explore_job(job=job, user_public_id=self.user.public_id)
+        publish_ready(str(run.public_id))
+        url = f'/api/scout/runs/{run.public_id}/'
+        self.assertEqual(client.get(url).data['preview']['error']['code'], 'selector')
+
+        approval = client.post(url + 'approve/')
+        self.assertEqual(approval.status_code, 400, approval.data)
+        self.assertEqual(approval.data['code'], 'selector')
+        revision = job.revisions.get()
+        self.assertFalse(revision.approved_plan_hash)
+
+        # A revision approved before the validation was added must be checked on start too.
+        revision.approved_plan_hash = revision.plan_hash
+        revision.save(update_fields=['approved_plan_hash'])
+        started = client.post(url + 'start/')
+        self.assertEqual(started.status_code, 400, started.data)
+        self.assertEqual(started.data['code'], 'selector')
+        run.refresh_from_db()
+        self.assertEqual(run.status, RUN_AWAITING)
+        self.assertFalse(run.tasks.filter(kind='extract').exists())
+
+    def test_empty_card_preview_still_checks_field_selector_syntax(self):
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        for kind, selector in (('css', '.price['), ('xpath', '//*[')):
+            with self.subTest(kind=kind):
+                job = create_job(
+                    user_public_id=self.user.public_id, title='Каталог', seed_urls=[self.url],
+                    record={'kind': 'css', 'selector': '.missing-card'},
+                    fields=[{'name': 'price', 'kind': kind, 'selector': selector}],
+                )
+                run = explore_job(job=job, user_public_id=self.user.public_id)
+                publish_ready(str(run.public_id))
+                url = f'/api/scout/runs/{run.public_id}/'
+                self.assertEqual(client.get(url).data['preview']['error']['code'], 'selector')
+                approval = client.post(url + 'approve/')
+                self.assertEqual(approval.status_code, 400, approval.data)
+                self.assertEqual(approval.data['code'], 'selector')
+                self.assertEqual(client.post(url + 'cancel/').status_code, 200)
 
     def test_resume_continues_without_duplicate_rows(self):
         job = self._job()

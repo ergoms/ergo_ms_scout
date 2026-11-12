@@ -117,6 +117,35 @@ class DailyScheduleTests(TestCase):
         self.assertEqual(current.revision.number, 2)
         self.assertEqual(current.scheduled_at, self.due + timedelta(days=1, hours=1))
 
+    def test_change_during_window_is_superseded_even_after_late_tick(self):
+        self._prepare()
+        with patch('django.utils.timezone.now', return_value=self.due + timedelta(minutes=5)):
+            response = self.client.patch(self.url, {'expected_version': 1, 'local_time': '10:00'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        old = self._tick(self.due + timedelta(minutes=20)).get()
+        self.assertEqual((old.status, old.reason, old.scheduled_at), ('skipped', 'superseded', self.due))
+        self.assertEqual(old.revision.number, 1)
+        self.assertIsNone(old.run_id)
+
+    def test_change_at_end_of_window_leaves_previous_occurrence_missed(self):
+        self._prepare()
+        with patch('django.utils.timezone.now', return_value=self.due + timedelta(minutes=15)):
+            response = self.client.patch(self.url, {'expected_version': 1, 'local_time': '10:00'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        old = self._tick(self.due + timedelta(minutes=20)).get()
+        self.assertEqual((old.status, old.reason), ('skipped', 'missed'))
+        self.assertIsNone(old.run_id)
+
+    def test_change_at_opening_takes_precedence_over_replacement_on_same_day(self):
+        self._prepare()
+        with patch('django.utils.timezone.now', return_value=self.due):
+            response = self.client.patch(self.url, {'expected_version': 1, 'local_time': '10:00'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        old = self._tick(self.due + timedelta(hours=1, minutes=5)).get()
+        self.assertEqual((old.status, old.reason, old.scheduled_at), ('skipped', 'superseded', self.due))
+        self.assertEqual(old.revision.number, 1)
+        self.assertIsNone(old.run_id)
+
     def test_version_checks_disable_and_pin_old_plan(self):
         self._prepare()
         self.assertEqual(self.client.post(self.url, self.body, format='json').data['code'], 'schedule_exists')

@@ -5,9 +5,9 @@ import ipaddress
 import re
 import socket
 import ssl
+from contextlib import nullcontext
 from http.client import HTTPException
-from queue import Empty, Queue
-from threading import BoundedSemaphore, Thread, Timer
+from threading import Timer
 from time import monotonic
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPSHandler, ProxyHandler
@@ -22,11 +22,8 @@ from urllib3.connectionpool import HTTPSConnectionPool
 from .errors import FetchError
 from .http_fetch import fetch_html, fetch_xml, fetch_text
 from .proxy_profiles import ip_authority, load_proxy
-from .public_http import _public_address, public_url_allowed
+from .public_http import SocketDeadline, _public_address, public_url_allowed, resolve_tcp_addresses
 from .url_norm import canonical_host
-
-_DNS_SLOTS = BoundedSemaphore(8)
-
 
 def _unavailable():
     return FetchError('proxy_unavailable', 'Прокси временно недоступен', retryable=True)
@@ -38,43 +35,34 @@ def _network():
 
 def _origin_ip(hostname, deadline):
     try:
-        literal = ipaddress.ip_address(hostname)
+        addresses = [str(ipaddress.ip_address(hostname))]
     except ValueError:
-        literal = None
-    if literal is not None:
-        addresses = [str(literal)]
-    else:
-        if not _DNS_SLOTS.acquire(blocking=False):
-            raise _network()
-        result = Queue(maxsize=1)
-
-        def resolve():
-            try:
-                answers = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
-                result.put([answer[4][0] for answer in answers])
-            except OSError:
-                result.put(None)
-            finally:
-                _DNS_SLOTS.release()
-
-        Thread(target=resolve, daemon=True).start()
         try:
-            addresses = result.get(timeout=max(0, deadline - monotonic()))
-        except Empty:
+            addresses = [answer[4][0] for answer in resolve_tcp_addresses(hostname, 443, deadline=deadline)]
+        except OSError:
             raise _network() from None
-        if addresses is None:
-            raise _network()
     if not addresses or any(not _public_address(address) for address in addresses):
         raise FetchError('url_blocked', 'Адрес сайта не разрешён', retryable=False)
     return addresses[0]
 
 
 class _ProxyConnection(HTTPSConnection):
-    def __init__(self, *args, scout_deadline, scout_proxy_name, **kwargs):
+    def __init__(self, *args, scout_deadline, scout_proxy_name, scout_socket_deadline, **kwargs):
         super().__init__(*args, **kwargs)
         self.scout_deadline = scout_deadline
         self.scout_proxy_name = scout_proxy_name
+        self.scout_socket_deadline = scout_socket_deadline
         self.watchdog = None
+
+    def _new_conn(self):
+        sock = super()._new_conn()
+        if self.scout_socket_deadline is not None:
+            try:
+                self.scout_socket_deadline.watch(sock)
+            except OSError:
+                sock.close()
+                raise
+        return sock
 
     def _connect_tls_proxy(self, hostname, sock):
         remaining = self.scout_deadline - monotonic()
@@ -98,9 +86,10 @@ class _ProxyConnection(HTTPSConnection):
         remaining = self.scout_deadline - monotonic()
         if remaining <= 0:
             raise _unavailable()
-        self.watchdog = Timer(remaining, expire)
-        self.watchdog.daemon = True
-        self.watchdog.start()
+        if self.scout_socket_deadline is None:
+            self.watchdog = Timer(remaining, expire)
+            self.watchdog.daemon = True
+            self.watchdog.start()
         try:
             super()._tunnel()
             if monotonic() >= self.scout_deadline:
@@ -147,11 +136,12 @@ class _ProxyResponse(addinfourl):
 
 class _ProxyHTTPSHandler(HTTPSHandler):
     @sensitive_variables()
-    def __init__(self, revision_id, owner, timeout):
+    def __init__(self, revision_id, owner, timeout, socket_deadline):
         super().__init__()
         self.revision_id = revision_id
         self.owner = owner
-        self.deadline = monotonic() + timeout
+        self.socket_deadline = socket_deadline
+        self.deadline = monotonic() + timeout if socket_deadline is None else socket_deadline.ends_at
 
     @sensitive_variables()
     def https_open(self, request):
@@ -175,6 +165,7 @@ class _ProxyHTTPSHandler(HTTPSHandler):
         target = urlunsplit(('https', ip_authority(destination, 443), parts.path or '/', parts.query, ''))
         manager.connection_from_url(target).conn_kw.update(
             scout_deadline=self.deadline, scout_proxy_name=proxy.tls_name,
+            scout_socket_deadline=self.socket_deadline,
         )
         headers = dict(request.header_items())
         headers['Host'] = f'[{hostname}]' if ':' in hostname else hostname
@@ -209,42 +200,52 @@ def proxy_target_allowed(url):
     return True
 
 
-def fetch_proxy_html(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None, same_origin=False):
+def fetch_proxy_html(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None, same_origin=False,
+                     whole_timeout=False):
     return _fetch_proxy(
         fetch_html, url, revision_id=revision_id, owner=owner, timeout_seconds=timeout_seconds,
-        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=same_origin,
+        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=same_origin, whole_timeout=whole_timeout,
     )
 
 
-def fetch_proxy_xml(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None):
+def fetch_proxy_xml(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None, whole_timeout=False):
     return _fetch_proxy(
         fetch_xml, url, revision_id=revision_id, owner=owner, timeout_seconds=timeout_seconds,
-        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=False,
+        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=False, whole_timeout=whole_timeout,
     )
 
 
-def fetch_proxy_text(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None):
+def fetch_proxy_text(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None, whole_timeout=False):
     return _fetch_proxy(
         fetch_text, url, revision_id=revision_id, owner=owner, timeout_seconds=timeout_seconds,
-        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=False,
+        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=False, whole_timeout=whole_timeout,
     )
 
 
-def _fetch_proxy(fetch, url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed, same_origin):
+def _fetch_proxy(fetch, url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed, same_origin, whole_timeout):
     def target_allowed(target):
         return (
             proxy_target_allowed(target)
-            and (not same_origin or urlsplit(target).hostname == urlsplit(url).hostname)
+            and (
+                not same_origin
+                or canonical_host(urlsplit(target).hostname) == canonical_host(urlsplit(url).hostname)
+            )
             and (url_allowed is None or url_allowed(target))
         )
 
     try:
-        return fetch(
-            url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=target_allowed,
-            handlers=(ProxyHandler({}), _ProxyHTTPSHandler(revision_id, owner, timeout_seconds)),
-        )
+        with SocketDeadline(timeout_seconds) if whole_timeout else nullcontext() as deadline:
+            result = fetch(
+                url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=target_allowed,
+                handlers=(ProxyHandler({}), _ProxyHTTPSHandler(revision_id, owner, timeout_seconds, deadline)),
+            )
+            if deadline is not None:
+                deadline.remaining()
+            return result
     except FetchError:
         raise
+    except TimeoutError:
+        raise _network() from None
     except Exception:
         # Подробности стороннего транспорта могут содержать заголовок прокси.
         raise FetchError('network', 'Не удалось загрузить страницу через прокси', retryable=False) from None

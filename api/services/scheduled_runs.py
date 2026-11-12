@@ -13,7 +13,6 @@ from .constants import (
 )
 from .daily_schedules import disable_schedule, owner_can_schedule
 from .errors import ScoutError
-from .preview import page_type_preview, preview_rows
 from .proxy_profiles import validate_revision
 from .runs import _lock_single_slot, explore_revision, start_run
 from .schedule_calendar import scheduled_time, START_WINDOW_SECONDS
@@ -52,8 +51,8 @@ def _backfill_history(now):
             day = revision.next_local_date
             if day is None:
                 break
-            _due, process_at = scheduled_time(day, revision.local_time, ZoneInfo(revision.timezone))
-            if revision.effective_until and process_at >= revision.effective_until:
+            due, process_at = scheduled_time(day, revision.local_time, ZoneInfo(revision.timezone))
+            if _after_revision(revision, due, process_at):
                 ScheduleRevision.objects.filter(pk=revision_id, next_local_date=day).update(next_local_date=None)
                 break
             if process_at > now:
@@ -74,12 +73,14 @@ def _process_day(revision_id, day, now):
         revision = schedule.revisions.select_related('plan_revision').get(pk=revision_id)
         revision.schedule = schedule
         due, process_at = scheduled_time(day, revision.local_time, ZoneInfo(revision.timezone))
-        if process_at < revision.effective_from or (
-            revision.effective_until and process_at >= revision.effective_until
-        ):
+        if process_at < revision.effective_from or _after_revision(revision, due, process_at):
             return
         if schedule.occurrences.filter(local_date=day).exists():
             return
+        if revision.effective_until is None:
+            superseded = _superseded_day(schedule, day)
+            if superseded is not None:
+                revision, due = superseded
         reason = _skip_reason(schedule, revision, due, now)
         run = None
         if not reason:
@@ -94,9 +95,32 @@ def _process_day(revision_id, day, now):
         )
 
 
+def _after_revision(revision, due, process_at):
+    end = revision.effective_until
+    return end is not None and (process_at > end or (process_at == end and due is None))
+
+
+def _superseded_day(schedule, day):
+    previous = schedule.revisions.filter(
+        enabled=True, effective_until__isnull=False, next_local_date__lte=day,
+    ).order_by('number')
+    for revision in previous:
+        due, _process_at = scheduled_time(day, revision.local_time, ZoneInfo(revision.timezone))
+        if due is not None and due >= revision.effective_from and _replaced_in_window(revision, due):
+            return revision, due
+    return None
+
+
+def _replaced_in_window(revision, due):
+    end = revision.effective_until
+    return end is not None and due <= end < due + timedelta(seconds=START_WINDOW_SECONDS)
+
+
 def _skip_reason(schedule, revision, due, now):
     if due is None:
         return 'local_time_missing'
+    if _replaced_in_window(revision, due):
+        return 'superseded'
     if now >= due + timedelta(seconds=START_WINDOW_SECONDS):
         return 'missed'
     if revision.number != schedule.version:
@@ -164,12 +188,6 @@ def _start_prepared_run(occurrence, run):
             reason = failed.error_code or 'preview_failed'
         else:
             try:
-                if (run.job_revision.crawl or {}).get('page_types'):
-                    _rows, diagnostics = page_type_preview(run)
-                    if not diagnostics['can_approve']:
-                        raise ScoutError('page_type_preview_blocked', 'Проверка типов страниц не пройдена')
-                else:
-                    preview_rows(run)
                 start_run(run=run)
             except ScoutError as exc:
                 reason = exc.code

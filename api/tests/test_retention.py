@@ -1,6 +1,7 @@
 """Очистка не подменяет результат пустым и восстанавливает сохранённое намерение."""
 
 import os
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -15,11 +16,10 @@ from rest_framework.test import APIClient
 
 from ..models import (
     Evidence, ExportArtifact, PageSnapshot, RetentionCleanup, RetentionCleanupItem,
-    RetentionLease, Run, Task, VisualSnapshot,
-    RetentionPreview,
+    RetentionLease, RetentionPolicy, RetentionPreview, Run, Task, VisualSnapshot,
 )
-from ..services.retention import process_cleanup
-from ..services.retention_locks import read_results
+from ..services.retention import build_manifest, digest, process_cleanup, sweep_retention, update_policy
+from ..services.retention_locks import read_results, resource_lock
 from ..services.snapshot_store import safe_snapshot_path
 from ..services.tasks_exec import publish_ready
 from .fixtures.ext002_catalog import ComparisonCatalog, comparison_plan
@@ -133,6 +133,15 @@ class RetentionTests(TestCase):
         preview = self.preview(['results'])
         self.assertEqual(preview['totals']['runs_with_result_deletion'], 1)
         self.assertEqual(preview['protected']['latest_results'], 2)
+        response = self.client.get(f"/api/scout/retention/previews/{preview['preview_public_id']}/items/")
+        self.assertEqual(response.status_code, 200)
+        items = {item['public_id']: item for item in response.data['items']}
+        self.assertTrue(items[str(base.public_id)]['comparison_will_expire'])
+        self.assertEqual(items[str(base.public_id)]['export_files'], 0)
+        for run in (second, third):
+            item = items[str(run.public_id)]
+            self.assertEqual(item['reason'], 'latest_results')
+            self.assertNotIn('comparison_will_expire', item)
         cleanup, body = self.accept(preview)
         replay = self.client.post('/api/scout/retention/cleanups/', body, format='json')
         self.assertEqual(replay.data['cleanup_public_id'], str(cleanup.public_id))
@@ -301,8 +310,6 @@ class RetentionTests(TestCase):
         self.assertFalse(PageSnapshot.objects.exclude(html_availability='available').exists())
 
     def test_automatic_daily_cleanup_is_disabled_then_created_once(self):
-        from ..services.retention import sweep_retention
-        from ..models import RetentionPolicy
         self.collect()
         self.client.get('/api/scout/retention/policy/')
         sweep_retention()
@@ -312,6 +319,71 @@ class RetentionTests(TestCase):
         sweep_retention()
         self.assertEqual(RetentionCleanup.objects.count(), 1)
         self.assertEqual(RetentionCleanup.objects.get().trigger, 'automatic')
+
+    def test_automatic_cleanup_saves_one_non_executable_preview_per_day(self):
+        run = self.collect()
+        path = safe_snapshot_path(run.snapshots.first().content_path)
+        body = path.read_bytes()
+        path.unlink()
+        RetentionPolicy.objects.create(user_public_id=self.user.public_id, automatic_enabled=True)
+        now = timezone.now()
+        with patch('modules.scout.api.services.retention.timezone.now', return_value=now):
+            sweep_retention()
+            sweep_retention()
+            self.assertFalse(RetentionPreview.objects.get().summary['executable'])
+            self.assertFalse(RetentionCleanup.objects.exists())
+            path.write_bytes(body)
+            sweep_retention()
+            self.assertEqual(RetentionPreview.objects.count(), 1)
+        with patch('modules.scout.api.services.retention.timezone.now', return_value=now + timedelta(days=1)):
+            sweep_retention()
+            self.assertEqual(RetentionPreview.objects.count(), 2)
+            self.assertEqual(RetentionCleanup.objects.get().trigger, 'automatic')
+
+    def test_changed_policy_during_automatic_preview_does_not_consume_day(self):
+        run = self.collect()
+        path = safe_snapshot_path(run.snapshots.first().content_path)
+        path.unlink()
+        policy = RetentionPolicy.objects.create(user_public_id=self.user.public_id, automatic_enabled=True)
+
+        def change_policy_after_scanning(*args):
+            result = build_manifest(*args)
+            update_policy(self.user.public_id, {'expected_version': 1, 'html_days': None})
+            return result
+
+        now = timezone.now()
+        with patch('modules.scout.api.services.retention.timezone.now', return_value=now):
+            with patch('modules.scout.api.services.retention.build_manifest', change_policy_after_scanning):
+                sweep_retention()
+            policy.refresh_from_db()
+            self.assertEqual(policy.version, 2)
+            self.assertIsNone(policy.last_automatic_date)
+            self.assertFalse(RetentionPreview.objects.exists())
+            sweep_retention()
+            self.assertEqual(RetentionCleanup.objects.get().preview.policy_version, 2)
+
+    def test_policy_changed_while_waiting_for_blob_leaves_html_available(self):
+        run = self.collect()
+        cleanup, _body = self.accept(self.preview(['html']))
+        paths = {safe_snapshot_path(path) for path in run.snapshots.values_list('content_path', flat=True)}
+        changed = []
+
+        @contextmanager
+        def change_policy_during_blob_lock(resource, **kwargs):
+            if resource.startswith('blob:') and not changed:
+                response = self.client.patch('/api/scout/retention/policy/', {
+                    'expected_version': 1, 'html_days': 500, 'result_days': 600,
+                }, format='json')
+                changed.append(response.status_code)
+            with resource_lock(resource, **kwargs) as acquired:
+                yield acquired
+
+        with patch('modules.scout.api.services.retention.resource_lock', change_policy_during_blob_lock):
+            self.finish(cleanup)
+        self.assertEqual(changed, [200])
+        self.assertEqual(set(cleanup.items.values_list('reason', flat=True)), {'policy_changed'})
+        self.assertTrue(all(path.exists() for path in paths))
+        self.assertFalse(run.snapshots.exclude(html_availability='available').exists())
 
     def test_other_owner_shared_blob_protects_file_without_disclosing_identity(self):
         run = self.collect()
@@ -382,6 +454,90 @@ class RetentionTests(TestCase):
             self.finish(cleanup)
             self.assertFalse(media.exists(export.storage_path))
             self.assertEqual(base.records.count(),0)
+
+    def test_result_cleanup_finishes_previously_interrupted_export_deletions(self):
+        from src.core.utils.media_client.local import LocalMediaClient
+        base = self.collect()
+        self.collect()
+        self.collect()
+        media = LocalMediaClient(str(Path(self.files) / 'media'))
+        with patch('modules.scout.api.services.exporting.get_media_client', return_value=media), patch(
+            'modules.scout.api.services.retention.get_media_client', return_value=media,
+        ):
+            url = f'/api/scout/runs/{base.public_id}/export/'
+            for kind in ('json', 'csv'):
+                self.assertEqual(self.client.post(url, {'kind': kind}, format='json').status_code, 200)
+            base.exports.update(created_at=timezone.now() - timedelta(days=8))
+            export_cleanup, _body = self.accept(self.preview(['exports']))
+            original_delete = media.delete
+
+            def crash_after_deletion(path):
+                original_delete(path)
+                raise OSError('worker stopped before saving the deletion')
+
+            with patch.object(media, 'delete', side_effect=OSError('storage unavailable')):
+                process_cleanup(export_cleanup.public_id)
+            with patch.object(media, 'delete', side_effect=crash_after_deletion):
+                process_cleanup(export_cleanup.public_id)
+            self.assertEqual(base.exports.filter(availability='purging').count(), 2)
+            paths = list(base.exports.values_list('storage_path', flat=True))
+            self.assertEqual(sum(media.exists(path) for path in paths), 1)
+
+            preview = self.preview(['results'])
+            self.assertTrue(preview['executable'])
+            self.assertEqual(preview['totals']['export_files'], 2)
+            cleanup, _body = self.accept(preview)
+            self.finish(cleanup)
+            base.refresh_from_db()
+            self.assertEqual(base.results_availability, 'expired')
+            self.assertEqual(base.exports.filter(availability='expired').count(), 2)
+            self.assertTrue(all(not media.exists(path) for path in paths))
+
+    def test_legacy_started_result_cleanup_waits_for_omitted_export(self):
+        from src.core.utils.media_client.local import LocalMediaClient
+        base = self.collect()
+        self.collect()
+        self.collect()
+        media = LocalMediaClient(str(Path(self.files) / 'media'))
+        with patch('modules.scout.api.services.exporting.get_media_client', return_value=media), patch(
+            'modules.scout.api.services.retention.get_media_client', return_value=media,
+        ):
+            url = f'/api/scout/runs/{base.public_id}/export/'
+            self.assertEqual(self.client.post(url, {'kind': 'json'}, format='json').status_code, 200)
+            base.exports.update(created_at=timezone.now() - timedelta(days=8))
+            artifact = base.exports.get()
+            export_cleanup, _body = self.accept(self.preview(['exports']))
+            with patch.object(media, 'delete', side_effect=OSError('storage unavailable')):
+                process_cleanup(export_cleanup.public_id)
+            artifact.refresh_from_db()
+            self.assertEqual(artifact.availability, 'purging')
+
+            cleanup, _body = self.accept(self.preview(['results']))
+            item = cleanup.items.get()
+            item.specification['exports'] = []
+            item.save(update_fields=['specification'])
+            preview = cleanup.preview
+            preview.manifest = [item.specification]
+            preview.manifest_hash = digest(preview.manifest)
+            preview.save(update_fields=['manifest', 'manifest_hash'])
+            Run.objects.filter(pk=base.pk).update(results_availability='purging')
+
+            process_cleanup(cleanup.public_id)
+            item.refresh_from_db()
+            base.refresh_from_db()
+            self.assertEqual(base.results_availability, 'purging')
+            self.assertEqual(base.records.count(), 3)
+            self.assertEqual(item.status, 'failed')
+            self.assertGreater(item.next_retry_at, timezone.now())
+            self.assertTrue(media.exists(artifact.storage_path))
+
+            export_cleanup.items.update(next_retry_at=None)
+            self.finish(export_cleanup)
+            cleanup.items.update(next_retry_at=None)
+            self.finish(cleanup)
+            base.refresh_from_db()
+            self.assertEqual(base.results_availability, 'expired')
+            self.assertFalse(media.exists(artifact.storage_path))
 
     def test_database_rollback_releases_writer_lock(self):
         from django.db import connection, transaction, DatabaseError

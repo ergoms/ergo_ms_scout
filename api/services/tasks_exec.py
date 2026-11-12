@@ -2,7 +2,6 @@
 
 import hashlib
 import logging
-import math
 import os
 from datetime import timedelta
 
@@ -11,9 +10,12 @@ from django.db.models import Case, F, Q, When, Window
 from django.db.models.functions import RowNumber
 from django.utils import timezone
 
-from ..models import Attempt, Evidence, PageSnapshot, Record, Run, Task
+from ..models import Attempt, CrawlURL, Evidence, PageSnapshot, Record, Run, Task
 from .constants import (
     CLAIMABLE_RUN_STATUSES,
+    CRAWL_ACTIVE,
+    CRAWL_DONE,
+    CRAWL_SKIPPED,
     LEASE_SECONDS,
     MAX_ATTEMPTS,
     REPUBLISH_AFTER_SECONDS,
@@ -138,7 +140,7 @@ def recover_expired_leases() -> int:
                 RUN_COMPLETED,
                 RUN_COMPLETED_WITH_ERRORS,
                 RUN_FAILED,
-            ):
+            ) or _fetch_already_covered(run, locked):
                 locked.status = TASK_CANCELLED
             elif locked.attempt_count >= MAX_ATTEMPTS:
                 locked.status = TASK_FAILED
@@ -294,9 +296,13 @@ def _fetch(task: Task, token: int) -> None:
     crawl = task.run.job_revision.crawl or {}
     url_allowed = None
     timeout = int(limits['timeout_seconds'])
+    network_params = {}
     if crawl.get('mode') == 'site' and task.run.status != 'exploring' and task.run.started_at:
         remaining = crawl['max_seconds'] - (timezone.now() - task.run.started_at).total_seconds()
-        timeout = max(1, min(timeout, math.ceil(remaining)))
+        if remaining <= 0:
+            raise FetchError('time', 'Истекло время обхода', retryable=False)
+        timeout = min(timeout, remaining)
+        network_params['whole_timeout'] = True
     if crawl.get('mode') == 'site':
         from .url_norm import host_allowed, resolve_url, rules_match
 
@@ -306,18 +312,17 @@ def _fetch(task: Task, token: int) -> None:
                         and (task.run.status == 'exploring' or rules_match(normalized, crawl.get('visit'))))
 
     fetch = fetch_public_html
-    proxy_params = {}
     if revision_id := task.run.job_revision.proxy_profile_revision_public_id:
         from .proxy_http import fetch_proxy_html
 
         fetch = fetch_proxy_html
-        proxy_params = {'revision_id': revision_id, 'owner': task.run.user_public_id}
+        network_params.update(revision_id=revision_id, owner=task.run.user_public_id)
     result = fetch(
         task.payload['url'],
         timeout_seconds=timeout,
         max_bytes=int(task.payload.get('byte_allowance') or limits['max_bytes']),
         url_allowed=url_allowed,
-        **proxy_params,
+        **network_params,
     )
     digest = hashlib.sha256(result['body']).hexdigest()
     charset = result.get('charset') or ''
@@ -328,13 +333,25 @@ def _fetch(task: Task, token: int) -> None:
         links_present = has_crawl_links(result['body'], result['content_type'], charset, result['final_url'])
 
     def write():
+        from .frontier import completed_snapshot, note_fetch
+
+        fresh = Run.objects.get(pk=task.run_id)
+        if task.payload.get('crawl_public_id'):
+            source = task.payload['url']
+            existing = completed_snapshot(fresh, source, result['final_url'])
+            if existing is not None:
+                note_fetch(fresh, existing, source_url=source)
+                return
         # Регистрация ссылки и запись байтов сериализованы с очисткой общего хеша.
         from .retention_locks import resource_lock
         with resource_lock('blob:' + digest):
+            if _fetch_expired(fresh, task):
+                return False
             from .retention import recover_pending_blob
             recover_pending_blob(digest)
             _digest, relative = store_snapshot_bytes(result['body'])
-            write_snapshot(relative)
+            snapshot = write_snapshot(relative)
+        note_fetch(fresh, snapshot)
 
     def write_snapshot(relative):
         metadata = {
@@ -361,9 +378,7 @@ def _fetch(task: Task, token: int) -> None:
             task.run_id,
             f'Страница скачана: HTTP {result["status"]}, {len(result["body"])} байт.',
         )
-        from .frontier import note_fetch
-        fresh = Run.objects.get(pk=task.run_id)
-        note_fetch(fresh, snapshot)
+        return snapshot
 
     _finish(task, token, write)
 
@@ -484,7 +499,9 @@ def _load_sitemap(task: Task, token: int) -> None:
     revision = run.job_revision
     crawl = revision.crawl
     remaining = crawl['max_seconds'] - (timezone.now() - run.started_at).total_seconds()
-    timeout = max(1, min(int(revision.limits['timeout_seconds']), math.ceil(remaining)))
+    if remaining <= 0:
+        raise FetchError('time', 'Истекло время обхода', retryable=False)
+    timeout = min(int(revision.limits['timeout_seconds']), remaining)
     byte_limit = task.payload.get('xml_allowance', 0)
     if byte_limit <= 0:
         raise FetchError('sitemap_budget', 'Исчерпан общий бюджет XML-карт', retryable=False)
@@ -500,7 +517,7 @@ def _load_sitemap(task: Task, token: int) -> None:
     try:
         result = fetch(
             task.payload['url'], timeout_seconds=timeout, max_bytes=byte_limit,
-            url_allowed=lambda url: map_allowed(run, url), **proxy_params,
+            url_allowed=lambda url: map_allowed(run, url), whole_timeout=True, **proxy_params,
         )
     except FetchError as exc:
         label = 'robots.txt' if is_robots else 'карту сайта'
@@ -525,7 +542,8 @@ def _finish(task: Task, token: int, write) -> None:
         locked = Task.objects.select_for_update().get(pk=task.pk)
         if locked.fencing_token != token or locked.status != TASK_LEASED:
             return
-        if run.status in (RUN_CANCELLING, RUN_CANCELLED):
+        discard = run.status in (RUN_CANCELLING, RUN_CANCELLED) or _fetch_expired(run, locked)
+        if discard or write() is False:
             locked.status = TASK_CANCELLED
             locked.lease_until = None
             locked.save(update_fields=['status', 'lease_until'])
@@ -534,7 +552,6 @@ def _finish(task: Task, token: int, write) -> None:
             )
             advance_run(run)
             return
-        write()
         locked.status = TASK_SUCCEEDED
         locked.lease_until = None
         locked.error_code = ''
@@ -556,7 +573,7 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
             return
         locked.error_code = code[:64]
         locked.error_message = text
-        if run.status in (RUN_CANCELLING, RUN_CANCELLED):
+        if run.status in (RUN_CANCELLING, RUN_CANCELLED) or _fetch_expired(run, locked) or _fetch_already_covered(run, locked):
             locked.status = TASK_CANCELLED
             locked.lease_until = None
         elif code == 'too_large' and locked.payload.get('byte_allowance', limits_max_bytes(run)) < limits_max_bytes(run):
@@ -564,7 +581,6 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
             stop_fetches(run, 'bytes')
             locked.status = TASK_CANCELLED
             locked.lease_until = None
-            from ..models import CrawlURL
             CrawlURL.objects.filter(run=run, public_id=locked.payload.get('crawl_public_id')).update(
                 state='skipped', skip_reason='bytes',
             )
@@ -597,6 +613,25 @@ def _fail(task: Task, token: int, code: str, message: str, *, retryable: bool) -
         elif locked.status == TASK_FAILED:
             _note_terminal_task_failure(run, locked)
         advance_run(locked.run)
+
+
+def _fetch_expired(run: Run, task: Task) -> bool:
+    from .crawl_budget import enforce_deadline
+
+    if task.kind not in (TASK_FETCH, TASK_SITEMAP) or not enforce_deadline(run):
+        return False
+    if row_id := task.payload.get('crawl_public_id'):
+        CrawlURL.objects.filter(run=run, public_id=row_id, state=CRAWL_ACTIVE).update(
+            state=CRAWL_SKIPPED, skip_reason='time',
+        )
+    return True
+
+
+def _fetch_already_covered(run: Run, task: Task) -> bool:
+    row_id = task.payload.get('crawl_public_id')
+    return bool(row_id and CrawlURL.objects.filter(
+        run=run, public_id=row_id, state=CRAWL_DONE, snapshot__isnull=False,
+    ).exists())
 
 
 def _note_terminal_task_failure(run: Run, task: Task) -> None:

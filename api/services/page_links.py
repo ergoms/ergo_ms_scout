@@ -1,6 +1,6 @@
 """Ссылки со сохранённой страницы. Скачивание и записи здесь не делаются."""
 
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from lxml import html as lxml_html
 from lxml.etree import LxmlError
@@ -20,8 +20,14 @@ def iter_hrefs(body: bytes, content_type: str, charset: str, page_url: str) -> t
     root = lxml_html.fromstring(decode_html(body, content_type, charset))
     base = page_url
     bases = root.xpath('//base[@href]')
-    if bases and bases[0].get('href'):
-        base = urljoin(page_url, bases[0].get('href'))
+    if bases and (href := bases[0].get('href')):
+        try:
+            candidate = urljoin(page_url, href)
+            target = urlsplit(candidate)
+            if target.scheme in ('http', 'https') and target.hostname and target.port != 0:
+                base = candidate
+        except ValueError:
+            pass
     hrefs = []
     for element in root.xpath('//a[@href]'):
         hrefs.append(element.get('href') or '')

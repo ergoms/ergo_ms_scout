@@ -23,8 +23,10 @@ IDENTITY_UNSET = object()
 def normalize_plan(seed_urls, fields, limits=None, record=None, crawl=None, *, identity=IDENTITY_UNSET) -> dict:
     urls = []
     seen = set()
-    for raw in seed_urls or []:
-        url = str(raw or '').strip()
+    for raw in _plan_list(seed_urls, '/seed_urls'):
+        if not isinstance(raw, str):
+            raise ScoutError('invalid', _('Адрес должен быть строкой'), path='/seed_urls')
+        url = raw.strip()
         if not url or url in seen:
             continue
         if not url.startswith(('http://', 'https://')):
@@ -62,7 +64,7 @@ def normalize_plan(seed_urls, fields, limits=None, record=None, crawl=None, *, i
     clean_record = _clean_record(record)
     clean_fields = []
     names = set()
-    for item in fields or []:
+    for item in _plan_list(fields, '/fields'):
         if not isinstance(item, dict):
             raise ScoutError('invalid', _('Поле задано неверно'))
         name = str(item.get('name') or '').strip()
@@ -136,7 +138,9 @@ def _clean_identity(raw, fields: list[dict], record=None) -> dict:
 
 
 def _clean_crawl(crawl, seed_urls) -> dict:
-    raw = crawl if isinstance(crawl, dict) else {}
+    if crawl is not None and not isinstance(crawl, dict):
+        raise ScoutError('invalid', _('Настройки обхода должны быть объектом'), path='/crawl')
+    raw = crawl or {}
     drop_query = raw.get('drop_query', DROP_QUERY)
     if not isinstance(drop_query, (list, tuple)) or any(not isinstance(key, str) for key in drop_query):
         raise ScoutError('invalid', _('Правило адреса задано неверно'))
@@ -150,7 +154,7 @@ def _clean_crawl(crawl, seed_urls) -> dict:
             raise ScoutError('invalid_page_types', _('Используйте только типы страниц или фильтр извлечения'),
                              path='/crawl/extract_on')
     hosts = []
-    for item in raw.get('allowed_hosts') or []:
+    for item in _plan_list(raw.get('allowed_hosts'), '/crawl/allowed_hosts'):
         text = str(item or '').strip()
         if not text:
             continue
@@ -162,15 +166,18 @@ def _clean_crawl(crawl, seed_urls) -> dict:
     if mode == 'site' and not hosts:
         found = []
         for url in seed_urls:
-            host = canonical_host(urlparse(url).hostname or '')
+            try:
+                host = canonical_host(urlparse(url).hostname or '')
+            except ValueError as exc:
+                raise ScoutError('invalid', _('Начальный адрес задан неверно'), path='/seed_urls') from exc
             if host and host not in found:
                 found.append(host)
         hosts = sorted(found)
     result = {
         'mode': mode,
         'allowed_hosts': hosts,
-        'visit': _clean_rules(raw.get('visit')),
-        'extract_on': _clean_rules(raw.get('extract_on')),
+        'visit': _clean_rules(raw.get('visit'), '/crawl/visit'),
+        'extract_on': _clean_rules(raw.get('extract_on'), '/crawl/extract_on'),
         'max_depth': _clamp(raw.get('max_depth'), 0, 5, CRAWL_LIMITS['max_depth']),
         'max_pages': _clamp(raw.get('max_pages'), 1, 200, CRAWL_LIMITS['max_pages']),
         'preview_pages': _clamp(raw.get('preview_pages'), 1, 5, CRAWL_LIMITS['preview_pages']),
@@ -184,7 +191,7 @@ def _clean_crawl(crawl, seed_urls) -> dict:
         'drop_query': list(drop_query),
     }
     result['preview_urls'] = []
-    for url in (raw.get('preview_urls') or []) if mode == 'site' else []:
+    for url in _plan_list(raw.get('preview_urls'), '/crawl/preview_urls') if mode == 'site' else []:
         normalized, _reason = resolve_url(str(url), str(url), result['drop_query'])
         if not normalized or not host_allowed(normalized, hosts):
             raise ScoutError('invalid', _('Адрес предпросмотра выходит за пределы обхода'))
@@ -266,9 +273,17 @@ def _clean_type_selectors(raw, field_names, action, path) -> dict:
     return selectors
 
 
-def _clean_rules(rules) -> list:
+def _plan_list(value, path):
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ScoutError('invalid', _('Ожидается список'), path=path)
+    return value
+
+
+def _clean_rules(rules, path) -> list:
     cleaned = []
-    for item in rules or []:
+    for item in _plan_list(rules, path):
         if not isinstance(item, dict):
             continue
         kind = str(item.get('kind') or '')
@@ -284,7 +299,7 @@ def _clamp(value, low, high, fallback) -> int:
         return fallback
     try:
         number = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ScoutError('invalid', _('Лимит обхода задан неверно')) from exc
     return max(low, min(number, high))
 

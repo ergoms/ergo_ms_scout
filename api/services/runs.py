@@ -19,6 +19,7 @@ from ..models import (
 from .constants import (
     OCCUPYING_STATUSES,
     OPEN_TASK_STATUSES,
+    PREVIEW_FETCH_PREFIX,
     RUN_AWAITING,
     RUN_CANCELLING,
     RUN_CANCELLED,
@@ -40,12 +41,12 @@ from .constants import (
 )
 from .errors import ScoutError
 from .plan import IDENTITY_UNSET, normalize_plan, plan_hash
-from .preview import page_type_preview, preview_urls
+from .preview import page_type_preview, preview_rows, preview_urls
 from .proxy_profiles import validate_revision
 from .fetch_failures import STOP_FETCH_FAILURES
 
 
-def create_job(*, user_public_id, title: str, seed_urls, fields, record=None, crawl=None,
+def create_job(*, user_public_id, title: str | None, seed_urls, fields, record=None, crawl=None,
                proxy_profile_revision_public_id=None, identity=IDENTITY_UNSET) -> Job:
     plan = normalize_plan(seed_urls, fields, record=record, crawl=crawl, identity=identity)
     clean_title = _clean_title(title)
@@ -120,7 +121,7 @@ def approve_run(*, run: Run, user_public_id) -> Run:
         revision = JobRevision.objects.select_for_update().get(pk=locked.job_revision_id)
         if revision.approved_plan_hash and revision.approved_plan_hash != revision.plan_hash:
             raise ScoutError('plan_changed', _('План изменился, нужно новое подтверждение'))
-        _require_verified_page_types(locked)
+        _require_valid_preview(locked)
         revision.approved_plan_hash = revision.plan_hash
         revision.approved_at = timezone.now()
         revision.approved_by_public_id = user_public_id
@@ -136,7 +137,7 @@ def start_run(*, run: Run) -> Run:
         revision = locked.job_revision
         if not revision.approved_plan_hash or revision.approved_plan_hash != revision.plan_hash:
             raise ScoutError('approval_required', _('Сбор без подтверждения этого плана запрещён'))
-        _require_verified_page_types(locked)
+        _require_valid_preview(locked)
         locked.status = RUN_RUNNING
         locked.started_at = timezone.now()
         locked.save(update_fields=['status', 'started_at'])
@@ -162,11 +163,13 @@ def start_run(*, run: Run) -> Run:
     return Run.objects.get(pk=run.pk)
 
 
-def _require_verified_page_types(run: Run) -> None:
+def _require_valid_preview(run: Run) -> None:
     if (run.job_revision.crawl or {}).get('page_types'):
         _rows, diagnostics = page_type_preview(run)
         if not diagnostics['can_approve']:
             raise ScoutError('page_type_preview_blocked', _('Исправьте ошибки и проверьте все извлекающие типы страниц'))
+    else:
+        preview_rows(run)
 
 
 def pause_run(*, run: Run) -> Run:
@@ -254,7 +257,7 @@ def _finish_if_idle(locked: Run) -> None:
         return
     if blocks_completion(locked):
         return
-    failed_tasks = locked.tasks.filter(status=TASK_FAILED)
+    failed_tasks = _failed_tasks(locked)
     failed = failed_tasks.exists()
     if failed and failed_tasks.filter(kind=TASK_SITEMAP).exists():
         locked.status = RUN_FAILED
@@ -344,7 +347,9 @@ def _create_revision(job: Job, number: int, plan: dict) -> JobRevision:
     return revision
 
 
-def _clean_title(title: str) -> str:
+def _clean_title(title: str | None) -> str:
+    if title is not None and not isinstance(title, str):
+        raise ScoutError('invalid', _('Название должно быть строкой'), path='/title')
     clean = (title or '').strip() or _('Сбор')
     if len(clean) > 200:
         raise ScoutError('invalid', _('Название слишком длинное'))
@@ -372,10 +377,14 @@ def _latest_revision(job: Job):
 def _summary(run: Run) -> str:
     parts = [
         item
-        for item in run.tasks.filter(status=TASK_FAILED).values_list('error_message', flat=True)
+        for item in _failed_tasks(run).values_list('error_message', flat=True)
         if item
     ]
     return '; '.join(parts)[:1000]
+
+
+def _failed_tasks(run: Run):
+    return run.tasks.filter(status=TASK_FAILED).exclude(idempotency_key__startswith=PREVIEW_FETCH_PREFIX)
 
 
 def _sha(payload) -> str:

@@ -4,6 +4,10 @@ import http.client
 import ipaddress
 import os
 import socket
+from concurrent.futures import Future
+from contextlib import nullcontext
+from functools import partial
+from threading import BoundedSemaphore, Lock, Thread, Timer
 from time import monotonic
 from urllib.parse import urlsplit
 from urllib.request import HTTPHandler, HTTPSHandler, ProxyHandler
@@ -12,6 +16,7 @@ from .errors import FetchError
 from .http_fetch import fetch_html, fetch_xml, fetch_text
 
 _IPV6_UNICAST = ipaddress.ip_network('2000::/3')
+_DNS_SLOTS = BoundedSemaphore(8)
 
 
 def _trusted_ip(host, port):
@@ -45,32 +50,91 @@ def public_url_allowed(url):
     raise FetchError('url_blocked', 'Нужен публичный HTTP(S)-адрес страницы', retryable=False)
 
 
-def fetch_public_html(url, *, timeout_seconds, max_bytes, url_allowed=None):
+def fetch_public_html(url, *, timeout_seconds, max_bytes, url_allowed=None, whole_timeout=False):
     return _fetch_public(
         fetch_html, url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed,
+        whole_timeout=whole_timeout,
     )
 
 
-def fetch_public_xml(url, *, timeout_seconds, max_bytes, url_allowed=None):
+def fetch_public_xml(url, *, timeout_seconds, max_bytes, url_allowed=None, whole_timeout=False):
     return _fetch_public(
         fetch_xml, url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed,
+        whole_timeout=whole_timeout,
     )
 
 
-def fetch_public_text(url, *, timeout_seconds, max_bytes, url_allowed=None):
+def fetch_public_text(url, *, timeout_seconds, max_bytes, url_allowed=None, whole_timeout=False):
     return _fetch_public(
         fetch_text, url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed,
+        whole_timeout=whole_timeout,
     )
 
 
-def _fetch_public(fetch, url, *, timeout_seconds, max_bytes, url_allowed):
+def _fetch_public(fetch, url, *, timeout_seconds, max_bytes, url_allowed, whole_timeout):
     def target_allowed(target):
         return (url_allowed is None or url_allowed(target)) and public_url_allowed(target)
 
-    return fetch(
-        url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=target_allowed,
-        handlers=(ProxyHandler({}), _PublicHTTPHandler(), _PublicHTTPSHandler()),
-    )
+    guard = SocketDeadline(timeout_seconds) if whole_timeout else nullcontext()
+    with guard as deadline:
+        return fetch(
+            url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=target_allowed,
+            handlers=(ProxyHandler({}), _PublicHTTPHandler(deadline), _PublicHTTPSHandler(deadline)),
+        )
+
+
+class SocketDeadline:
+    """Один срок для соединения, ответа и всех HTTP-переходов попытки."""
+
+    def __init__(self, timeout):
+        self.ends_at = monotonic() + timeout
+        self._lock = Lock()
+        self._socket = None
+        self._timer = Timer(timeout, self._expire)
+        self._timer.daemon = True
+
+    def __enter__(self):
+        self._timer.start()
+        return self
+
+    def __exit__(self, *_exc):
+        self._timer.cancel()
+        with self._lock:
+            if self._socket is not None:
+                self._socket.close()
+                self._socket = None
+
+    def remaining(self):
+        remaining = self.ends_at - monotonic()
+        if remaining <= 0:
+            raise TimeoutError('HTTP request timed out')
+        return remaining
+
+    def watch(self, connection):
+        with self._lock:
+            self.remaining()
+            # TLS забирает дескриптор исходного сокета. Дубликат прерывает то же соединение.
+            watched = connection.dup()
+            if self._socket is not None:
+                self._socket.close()
+            self._socket = watched
+
+    def connect(self, address, timeout, source_address=None):
+        connection = _connect_public(address, timeout, source_address, deadline=self.ends_at)
+        try:
+            self.watch(connection)
+        except OSError:
+            connection.close()
+            raise
+        return connection
+
+    def _expire(self):
+        with self._lock:
+            if self._socket is not None:
+                try:
+                    self._socket.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
 
 
 def _public_address(address):
@@ -83,10 +147,47 @@ def _public_address(address):
     return ip.is_global and not (ip.is_multicast or ip.is_reserved)
 
 
-def _connect_public(address, timeout, source_address=None):
-    deadline = monotonic() + timeout
+def resolve_tcp_addresses(host, port, *, deadline):
+    """Ждём DNS до дедлайна, удерживая место до выхода системного вызова."""
+    if monotonic() >= deadline:
+        raise TimeoutError('DNS lookup timed out')
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)
+    if not _DNS_SLOTS.acquire(blocking=False):
+        raise OSError('DNS resolver is busy')
+    result = Future()
+
+    def resolve():
+        try:
+            result.set_result(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
+        except Exception as exc:
+            result.set_exception(exc)
+        finally:
+            _DNS_SLOTS.release()
+
+    try:
+        Thread(target=resolve, daemon=True).start()
+    except RuntimeError as exc:
+        _DNS_SLOTS.release()
+        raise OSError('Could not start DNS resolver') from exc
+    addresses = result.result(timeout=max(0, deadline - monotonic()))
+    if monotonic() >= deadline:
+        raise TimeoutError('DNS lookup timed out')
+    return addresses
+
+
+def _connect_public(address, timeout, source_address=None, *, deadline=None):
+    connect_until = monotonic() + timeout
     trusted_ip = _trusted_ip(*address)
-    addresses = socket.getaddrinfo(*address, type=socket.SOCK_STREAM)
+    if deadline is None:
+        addresses = socket.getaddrinfo(*address, type=socket.SOCK_STREAM)
+    else:
+        connect_until = min(connect_until, deadline)
+        addresses = resolve_tcp_addresses(*address, deadline=connect_until)
     if not addresses or any(
         ipaddress.ip_address(info[4][0]) != trusted_ip and not _public_address(info[4][0])
         for info in addresses
@@ -96,7 +197,7 @@ def _connect_public(address, timeout, source_address=None):
     # Подключаемся к уже проверенному IP без повторного разрешения имени.
     last_error = None
     for family, kind, protocol, _, sockaddr in addresses:
-        remaining = deadline - monotonic()
+        remaining = connect_until - monotonic()
         if remaining <= 0:
             raise TimeoutError('HTTP connection timed out')
         connection = socket.socket(family, kind, protocol)
@@ -113,22 +214,30 @@ def _connect_public(address, timeout, source_address=None):
 
 
 class _PublicHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, deadline=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self._create_connection = _connect_public
+        self._create_connection = _connect_public if deadline is None else deadline.connect
 
 
 class _PublicHTTPSConnection(http.client.HTTPSConnection):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, deadline=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self._create_connection = _connect_public
+        self._create_connection = _connect_public if deadline is None else deadline.connect
 
 
 class _PublicHTTPHandler(HTTPHandler):
+    def __init__(self, deadline=None):
+        super().__init__()
+        self._connect = partial(_PublicHTTPConnection, deadline=deadline)
+
     def http_open(self, request):
-        return self.do_open(_PublicHTTPConnection, request)
+        return self.do_open(self._connect, request)
 
 
 class _PublicHTTPSHandler(HTTPSHandler):
+    def __init__(self, deadline=None):
+        super().__init__()
+        self._connect = partial(_PublicHTTPSConnection, deadline=deadline)
+
     def https_open(self, request):
-        return self.do_open(_PublicHTTPSConnection, request, context=self._context)
+        return self.do_open(self._connect, request, context=self._context)

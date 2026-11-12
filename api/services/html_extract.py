@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from html.parser import HTMLParser
 
 from lxml import html as lxml_html
 from lxml.etree import XPathError, _Comment, _ProcessingInstruction
@@ -15,8 +16,10 @@ from .value_types import legacy_values, typed_cell
 _SPACE = re.compile(r'\s+')
 _SIMPLE = re.compile(r'^(?P<tag>[\w-]+|\*)?(?P<rest>(?:[.#][\w-]+)*)$')
 _CLASS = re.compile(r'[.#][\w-]+')
-_CHARSET = re.compile(br'charset\s*=\s*["\']?([A-Za-z0-9._-]+)', re.I)
+_CHARSET_LABEL = re.compile(r'[A-Za-z0-9._-]+')
 _HEADER_CHARSET = re.compile(r'charset\s*=\s*["\']?([A-Za-z0-9._-]+)', re.I)
+_XML_DECLARATION = re.compile(r'^\s*<\?xml(?=\s)(.*?)\?>', re.S)
+_XML_ENCODING = re.compile(r'\bencoding\s*=\s*["\']([A-Za-z0-9._-]+)["\']')
 
 
 def extract_html(body: bytes, rules: list[dict], record=None, content_type: str = '', charset: str = '',
@@ -32,6 +35,9 @@ def extract_html(body: bytes, rules: list[dict], record=None, content_type: str 
         record_rules = []
         targets = [None]
     elif not containers:
+        empty = lxml_html.Element('div')
+        for rule in rules:
+            _nodes(empty, rule, relative=rule.get('scope') == 'record')
         return []
     else:
         page_rules = [rule for rule in rules if rule.get('scope') != 'record']
@@ -105,10 +111,14 @@ def check_plan_selectors(body: bytes, rules: list[dict], record, *, charset: str
 
 
 def decode_html(body: bytes, content_type: str = '', charset: str = '') -> str:
-    bom_text = _decode_bom(body)
-    if bom_text is not None:
-        return bom_text
-    chosen = (charset or _header_charset(content_type) or _meta_charset(body)).strip()
+    text = _decode_bom(body)
+    if text is None:
+        text = _decode_declared(body, (charset or _declared_charset(body, content_type)).strip())
+    # Парсер получает Unicode, поэтому исходная декларация кодировки ему не нужна.
+    return _XML_DECLARATION.sub('', text, count=1)
+
+
+def _decode_declared(body: bytes, chosen: str) -> str:
     if chosen:
         try:
             return body.decode(chosen, errors='replace')
@@ -124,7 +134,7 @@ def detected_charset(body: bytes, content_type: str = '') -> str:
     bom_name = _bom_name(body)
     if bom_name:
         return bom_name
-    declared = (_header_charset(content_type) or _meta_charset(body)).strip()
+    declared = _declared_charset(body, content_type).strip()
     if declared:
         return declared[:40]
     try:
@@ -294,11 +304,36 @@ def _header_charset(content_type: str) -> str:
     return match.group(1) if match else ''
 
 
-def _meta_charset(body: bytes) -> str:
-    match = _CHARSET.search(body[:4096])
-    if match is None:
-        return ''
-    return match.group(1).decode('ascii', errors='ignore')
+def _declared_charset(body: bytes, content_type: str) -> str:
+    if charset := _header_charset(content_type):
+        return charset
+    prefix = body[:4096].decode('latin-1')
+    if declaration := _XML_DECLARATION.match(prefix):
+        if encoding := _XML_ENCODING.search(declaration[1]):
+            return encoding[1]
+    parser = _MetaCharsetParser()
+    try:
+        parser.feed(prefix)
+    except (AssertionError, ValueError):
+        # Некорректная разметка не должна срывать распознавание по байтам.
+        pass
+    return parser.charset
+
+
+class _MetaCharsetParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.charset = ''
+
+    def handle_starttag(self, tag, attrs):
+        if tag != 'meta' or self.charset:
+            return
+        attributes = dict(attrs)
+        charset = (attributes.get('charset') or '').strip()
+        if not charset and (attributes.get('http-equiv') or '').strip().lower() == 'content-type':
+            charset = _header_charset(attributes.get('content') or '')
+        if _CHARSET_LABEL.fullmatch(charset):
+            self.charset = charset
 
 
 def _css_to_xpath(selector: str, *, relative: bool = False) -> str:

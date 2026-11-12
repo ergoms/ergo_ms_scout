@@ -5,6 +5,7 @@ import os
 import threading
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from time import sleep
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -20,10 +21,11 @@ from modules.scout.api.services.constants import (
     TASK_CRAWL, TASK_EXTRACT, TASK_FETCH, TASK_PENDING, TASK_SITEMAP,
 )
 from modules.scout.api.services.crawl_budget import reconcile
+from modules.scout.api.services.errors import FetchError
 from modules.scout.api.services.frontier import discover, remember
 from modules.scout.api.services.public_http import fetch_public_html
 from modules.scout.api.services.runs import approve_run, create_job, explore_job, pause_run, resume_run, start_run, _finish_if_idle
-from modules.scout.api.services.tasks_exec import publish_ready, recover_expired_leases
+from modules.scout.api.services.tasks_exec import _claim, _fetch, publish_ready, recover_expired_leases, run_one
 from modules.scout.api.tasks import execute_scout_task
 
 FIELDS = [{'name': 'title', 'kind': 'css', 'selector': 'h1', 'scope': 'page', 'many': False}]
@@ -99,6 +101,18 @@ def _site(port_holder):
                     self.send_response(503)
                     self.end_headers()
                     return
+            if path == '/slow-body':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', '10')
+                self.end_headers()
+                for _ in range(10):
+                    try:
+                        self.wfile.write(b'0')
+                    except OSError:
+                        return
+                    sleep(0.1)
+                return
             body = _body(self.path, host).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -356,6 +370,48 @@ class CrawlTests(TestCase):
         self.assertEqual(Task.objects.filter(run=run, kind='fetch', status='succeeded').count(), 1)
         self.assertTrue(CrawlURL.objects.filter(run=run, normalized_url=f'{self.origin}/quiet', skip_reason='redirect').exists())
 
+    def test_redirect_alias_uses_one_html_page_from_budget(self):
+        run = self._crawl('/redir', max_pages=2)
+
+        self.assertEqual(run.status, RUN_COMPLETED)
+        self.assertEqual(run.stop_reason, '')
+        self.assertEqual(run.snapshots.count(), 2)
+        self.assertEqual(run.records.count(), 2)
+        self.assertEqual(run.crawl_urls.filter(state='done').count(), 3)
+
+    def test_parallel_redirect_keeps_one_snapshot_and_releases_page_reservation(self):
+        target = f'{self.origin}/target'
+        response = {'body': b'<h1>Target</h1><a href="/next">Next</a>', 'final_url': target,
+                    'status': 200, 'content_type': 'text/html', 'charset': 'utf-8'}
+        for first, second in (('/go', '/target'), ('/target', '/go')):
+            with self.subTest(first=first):
+                run = self._open('/quiet', max_pages=3)
+                claimed = {}
+                for path in ('/go', '/target'):
+                    url = f'{self.origin}{path}'
+                    remember(run, url, base=self.origin, depth=1, parent=None)
+                    task = run.tasks.get(payload__url=url)
+                    claimed[path] = _claim(str(task.public_id), task.fencing_token)
+                    self.assertIsNotNone(claimed[path])
+
+                with patch('modules.scout.api.services.tasks_exec.fetch_public_html', return_value=response):
+                    _fetch(*claimed[first])
+                    if first == '/target':
+                        crawl_task = run.tasks.get(kind=TASK_CRAWL, status=TASK_PENDING)
+                        run_one(str(crawl_task.public_id), crawl_task.fencing_token)
+                        self.assertEqual(run.crawl_urls.get(normalized_url=f'{self.origin}/next').skip_reason, 'max_pages')
+                    _fetch(*claimed[second])
+
+                publish_ready(run.public_id)
+                run.refresh_from_db()
+                self.assertEqual(run.status, RUN_COMPLETED)
+                self.assertEqual(run.stop_reason, '')
+                snapshot = run.snapshots.get(final_url=target)
+                self.assertEqual(run.crawl_urls.filter(snapshot=snapshot, state='done').count(), 2)
+                self.assertEqual(run.records.filter(snapshot=snapshot).count(), 1)
+                self.assertEqual(run.records.count(), 3)
+                self.assertEqual(run.crawl_urls.get(normalized_url=f'{self.origin}/next').state, 'done')
+
     def test_same_url_is_remembered_once(self):
         job = create_job(
             user_public_id=self.user.public_id,
@@ -525,6 +581,100 @@ class CrawlTests(TestCase):
         run.refresh_from_db()
         self.assertEqual(run.status, 'awaiting_confirmation')
         self.assertEqual(run.snapshots.count(), 1)
+
+    def test_main_crawl_retries_a_seed_that_exhausted_preview_attempts(self):
+        flaky_url = f'{self.origin}/flaky'
+        job = create_job(user_public_id=self.user.public_id, title='Повтор семени',
+                         seed_urls=[f'{self.origin}/quiet', flaky_url], fields=FIELDS, crawl={'mode': 'site'})
+        hits = 0
+
+        def fetch(url, **_kwargs):
+            nonlocal hits
+            if url == flaky_url:
+                hits += 1
+                if hits <= 3:
+                    raise FetchError('http_503', 'Временная ошибка', retryable=True)
+            return {'body': b'<h1>Title</h1>', 'final_url': url, 'status': 200, 'content_type': 'text/html'}
+
+        with patch('modules.scout.api.services.tasks_exec.fetch_public_html', side_effect=fetch):
+            run = explore_job(job=job, user_public_id=self.user.public_id)
+            publish_ready(run.public_id)
+            failed_preview = run.tasks.get(payload__url=flaky_url, status='failed')
+            self.assertEqual(failed_preview.attempt_count, 3)
+            approve_run(run=run, user_public_id=self.user.public_id)
+            run = start_run(run=run)
+            publish_ready(run.public_id)
+
+        run.refresh_from_db()
+        self.assertEqual(hits, 4)
+        self.assertEqual(run.status, RUN_COMPLETED)
+        self.assertEqual(run.error_summary, '')
+        self.assertEqual(run.records.count(), 2)
+        self.assertEqual(run.tasks.get(payload__url=flaky_url, status='succeeded').attempt_count, 1)
+        failed_preview.refresh_from_db()
+        self.assertEqual(failed_preview.status, 'failed')
+        self.assertEqual(failed_preview.attempts.count(), 3)
+
+    def test_last_html_response_after_crawl_deadline_is_discarded(self):
+        run = self._open('/quiet', max_seconds=10)
+        late_url = f'{self.origin}/late'
+        remember(run, late_url, base=self.origin, depth=1, parent=None)
+        task = run.tasks.get(payload__url=late_url)
+        clock = run.started_at
+
+        def fetch(url, **_kwargs):
+            nonlocal clock
+            clock += timedelta(seconds=11)
+            return {'body': b'<h1>Late</h1>', 'final_url': url, 'status': 200, 'content_type': 'text/html'}
+
+        with (patch.object(timezone, 'now', side_effect=lambda: clock),
+              patch('modules.scout.api.services.tasks_exec.fetch_public_html', side_effect=fetch)):
+            run_one(str(task.public_id), task.fencing_token)
+
+        run.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual((run.status, run.stop_reason), (RUN_COMPLETED, 'time'))
+        self.assertEqual(task.status, 'cancelled')
+        self.assertEqual(task.attempts.get().status, 'cancelled')
+        self.assertEqual(run.crawl_urls.get(normalized_url=late_url).skip_reason, 'time')
+        self.assertEqual(run.snapshots.count(), 1)
+        self.assertEqual(run.records.count(), 1)
+
+    def test_sitemap_response_after_crawl_deadline_does_not_open_frontier(self):
+        sitemap = f'{self.origin}/sitemap.xml'
+        job = create_job(user_public_id=self.user.public_id, title='Медленная карта',
+                         seed_urls=[f'{self.origin}/quiet'], fields=FIELDS,
+                         crawl={'mode': 'site', 'sitemap_url': sitemap, 'max_seconds': 10})
+        run = explore_job(job=job, user_public_id=self.user.public_id)
+        publish_ready(run.public_id)
+        approve_run(run=run, user_public_id=self.user.public_id)
+        run = start_run(run=run)
+        task = run.tasks.get(kind=TASK_SITEMAP)
+        clock = run.started_at
+
+        def fetch(url, **_kwargs):
+            nonlocal clock
+            clock += timedelta(seconds=11)
+            body = f'<urlset><url><loc>{self.origin}/late</loc></url></urlset>'.encode()
+            return {'body': body, 'final_url': url, 'status': 200, 'content_type': 'application/xml'}
+
+        with (patch.object(timezone, 'now', side_effect=lambda: clock),
+              patch('modules.scout.api.services.tasks_exec.fetch_public_xml', side_effect=fetch)):
+            run_one(str(task.public_id), task.fencing_token)
+
+        run.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual((run.status, run.stop_reason), (RUN_COMPLETED, 'time'))
+        self.assertEqual(task.status, 'cancelled')
+        self.assertFalse(run.crawl_urls.exists())
+        self.assertFalse(run.records.exists())
+
+    def test_http_deadline_bounds_a_body_that_arrives_in_small_chunks(self):
+        url = f'{self.origin}/slow-body'
+        self.assertEqual(fetch_public_html(url, timeout_seconds=0.3, max_bytes=100)['body'], b'0' * 10)
+        with self.assertRaises(FetchError) as caught:
+            fetch_public_html(url, timeout_seconds=0.3, max_bytes=100, whole_timeout=True)
+        self.assertEqual(caught.exception.code, 'network')
 
     def test_skipped_urls_are_bounded_by_frontier_cap(self):
         run = self._crawl('/storm', frontier_cap=3)

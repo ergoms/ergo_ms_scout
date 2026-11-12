@@ -8,6 +8,7 @@ TASK_FETCH = 'fetch'
 TASK_CRAWL = 'crawl'
 TASK_EXTRACT = 'extract'
 TASK_SITEMAP = 'sitemap'
+PREVIEW_FETCH_PREFIX = 'preview:fetch:'
 
 CRAWL_QUEUED = 'queued'
 CRAWL_ACTIVE = 'active'

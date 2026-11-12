@@ -6,7 +6,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from ..models import Attempt, CrawlURL, PageSnapshot, Task
-from .constants import TASK_FETCH, TASK_LEASED, TASK_PENDING, TASK_RETRY_WAIT, TASK_CANCELLED, TASK_SITEMAP
+from .constants import RUN_PAUSING, RUN_RUNNING, TASK_FETCH, TASK_LEASED, TASK_PENDING, TASK_RETRY_WAIT, TASK_CANCELLED, TASK_SITEMAP
 
 
 def snapshot_bytes(run) -> int:
@@ -29,7 +29,7 @@ def stop_fetches(run, reason) -> None:
 
 def enforce_deadline(run) -> bool:
     config = run.job_revision.crawl or {}
-    if config.get('mode') != 'site' or run.status != 'running':
+    if config.get('mode') != 'site' or run.status not in (RUN_RUNNING, RUN_PAUSING):
         return False
     if run.started_at and timezone.now() >= run.started_at + timedelta(seconds=config['max_seconds']):
         stop_fetches(run, 'time')

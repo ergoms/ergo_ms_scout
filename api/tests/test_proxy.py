@@ -97,6 +97,17 @@ class _Origin(socketserver.StreamRequestHandler):
             self.wfile.write(b'HTTP/1.1 200 OK\r\nCF-Mitigated: challenge\r\nContent-Type: text/html\r\n'
                              b'Content-Length: 0\r\nConnection: close\r\n\r\n')
             return
+        if request.startswith(b'GET /slow-body '):
+            body = b'<h1>' + (b'x' * 70) + b'</h1>'
+            self.wfile.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: '
+                             + str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n')
+            try:
+                for byte in body:
+                    self.wfile.write(bytes((byte,)))
+                    sleep(0.04)
+            except OSError:
+                pass
+            return
         body = b'<h1>Catalog</h1><a href="/item">Item</a>' if b'/catalog ' in request else b'<h1>Item</h1>'
         self.wfile.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: '
                          + str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n' + body)
@@ -437,6 +448,18 @@ class ProxyTests(TestCase):
             checked = self.client.post(self.path + profile['public_id'] + '/check/', {}, format='json')
         self.assertEqual(checked.data, {'status': 'failed', 'code': 'proxy_tls_error'})
         self.assertEqual(len(self.proxy.requests), seen)
+
+    def test_whole_timeout_stops_origin_body_despite_continuous_bytes(self):
+        profile = self._profile()
+        started = monotonic()
+        with self.assertRaises(FetchError) as timeout:
+            proxy_http.fetch_proxy_html('https://origin.test/slow-body', revision_id=profile['revision_public_id'],
+                                        owner=self.user.public_id, timeout_seconds=0.75, max_bytes=1024,
+                                        whole_timeout=True)
+        self.assertEqual(timeout.exception.code, 'network')
+        self.assertTrue(timeout.exception.retryable)
+        self.assertLess(monotonic() - started, 2)
+        self.assertTrue(self.origin.requests[-1][0].startswith(b'GET /slow-body '))
 
     def test_challenge_through_https_proxy_is_not_a_snapshot_or_retry(self):
         from modules.scout.api.models import VisualSnapshot

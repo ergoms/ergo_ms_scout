@@ -59,15 +59,16 @@ class JobListCreateView(BaseAPIView):
     def post(self, request):
         try:
             user_id = require_user_public_id(request.user)
+            data = _request_object(request.data)
             job = create_job(
                 user_public_id=user_id,
-                title=request.data.get('title') or '',
-                seed_urls=request.data.get('seed_urls') or [],
-                fields=request.data.get('fields') or [],
-                record=request.data.get('record'),
-                crawl=request.data.get('crawl'),
-                identity=request.data.get('identity', IDENTITY_UNSET),
-                proxy_profile_revision_public_id=request.data.get('proxy_profile_revision_public_id'),
+                title=data.get('title'),
+                seed_urls=data.get('seed_urls'),
+                fields=data.get('fields'),
+                record=data.get('record'),
+                crawl=data.get('crawl'),
+                identity=data.get('identity', IDENTITY_UNSET),
+                proxy_profile_revision_public_id=data.get('proxy_profile_revision_public_id'),
             )
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))
@@ -87,16 +88,17 @@ class JobDetailView(BaseAPIView):
     def patch(self, request, public_id):
         job = get_object_or_404(jobs_for(request.user), public_id=public_id)
         try:
+            data = _request_object(request.data)
             revise_job(
                 job=job,
-                seed_urls=request.data.get('seed_urls') or [],
-                fields=request.data.get('fields') or [],
-                record=request.data.get('record'),
-                title=request.data.get('title'),
-                crawl=request.data.get('crawl'),
-                identity=request.data.get('identity', IDENTITY_UNSET),
-                **({'proxy_profile_revision_public_id': request.data['proxy_profile_revision_public_id']}
-                   if 'proxy_profile_revision_public_id' in request.data else {}),
+                seed_urls=data.get('seed_urls'),
+                fields=data.get('fields'),
+                record=data.get('record'),
+                title=data.get('title'),
+                crawl=data.get('crawl'),
+                identity=data.get('identity', IDENTITY_UNSET),
+                **({'proxy_profile_revision_public_id': data['proxy_profile_revision_public_id']}
+                   if 'proxy_profile_revision_public_id' in data else {}),
             )
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))
@@ -280,14 +282,21 @@ class RunExportView(BaseAPIView):
 
     def post(self, request, public_id):
         run = get_object_or_404(runs_for(request.user), public_id=public_id)
-        kind = str(request.data.get('kind') or 'json')
         try:
-            typed = use_typed_values(request.data.get('value_format'))
+            data = _request_object(request.data)
+            kind = str(data.get('kind') or 'json')
+            typed = use_typed_values(data.get('value_format'))
             _artifact, url, filename = export_run(run=run, kind=kind, typed=typed)
         except ScoutError as exc:
             return Response(error_payload(exc), status=error_status(exc))
         audit_run('scout.export.created', request, run, filename)
         return Response({'download_url': url, 'filename': filename, 'kind': kind})
+
+
+def _request_object(data):
+    if not isinstance(data, dict):
+        raise ScoutError('invalid', _('Тело запроса должно быть объектом'), path='/')
+    return data
 
 
 def _run_body(run, *, typed: bool = False):

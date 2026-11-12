@@ -153,7 +153,7 @@ class LifecycleTests(TestCase):
     def test_unexpected_preview_error_releases_the_global_slot(self):
         run, occurrence = self._scheduled_preview('//h1')
         with (
-            patch('modules.scout.api.services.scheduled_runs.preview_rows', side_effect=ValueError('parser error')),
+            patch('modules.scout.api.services.runs.preview_rows', side_effect=ValueError('parser error')),
             self.assertLogs('celery.module.scout.tasks', level='ERROR'),
         ):
             progress_scheduled_runs(str(run.public_id))

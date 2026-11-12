@@ -4,15 +4,18 @@ import gzip
 import io
 import logging
 import zlib
-from http.client import HTTPException
+from http.client import HTTPException, IncompleteRead
+from string import punctuation
 from urllib import error as urlerror
 from urllib import request as urlrequest
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from django.utils.translation import gettext as _
 
 from .errors import FetchError
 from .challenges import raise_for_challenge
 from .html_extract import detected_charset
+from .url_norm import canonical_host
 
 logger = logging.getLogger('modules.scout')
 
@@ -70,7 +73,7 @@ def _fetch_response(url, *, timeout_seconds, max_bytes, url_allowed, handlers, a
         raise FetchError('url_scope', _('Адрес выходит за пределы плана'), retryable=False)
     opener = urlrequest.build_opener(_LimitedRedirect(url_allowed), *handlers)
     req = urlrequest.Request(
-        url,
+        _transport_url(url),
         headers={'User-Agent': 'ERGO-SCOUT/0.1', 'Accept': accept},
     )
     try:
@@ -83,7 +86,7 @@ def _fetch_response(url, *, timeout_seconds, max_bytes, url_allowed, handlers, a
             if media_types and media and media not in media_types:
                 raise FetchError('not_html', _('Ответ не является HTML'), retryable=False)
             encoding = response.headers.get('Content-Encoding', '')
-            body = _unwrap_content(_read_limited(response, max_bytes), encoding, max_bytes)
+            body = _unwrap_content(_read_limited(response, max_bytes, status), encoding, max_bytes)
             raise_for_challenge(headers=response.headers, url=final_url or url, body=body, content_type=content_type)
     except FetchError:
         raise
@@ -112,10 +115,25 @@ def _fetch_response(url, *, timeout_seconds, max_bytes, url_allowed, handlers, a
 
     return {
         'status': int(status or 0),
-        'final_url': final_url or url,
+        'final_url': url if not final_url or final_url == req.full_url else final_url,
         'content_type': content_type,
         'body': body,
     }
+
+
+def _transport_url(url: str) -> str:
+    """Кодируем IRI для HTTP, сохраняя разделители и уже экранированные байты."""
+    if url.isascii():
+        return url
+    parts = urlsplit(url)
+    authority = parts.netloc
+    if not authority.isascii():
+        host = canonical_host(parts.hostname or '')
+        if host is None or parts.username is not None:
+            raise FetchError('url_blocked', _('Нужен публичный HTTP(S)-адрес страницы'), retryable=False)
+        authority = host if parts.port is None else f'{host}:{parts.port}'
+    return urlunsplit((parts.scheme, authority, quote(parts.path, safe=punctuation),
+                       quote(parts.query, safe=punctuation), parts.fragment))
 
 
 def _unwrap_content(body: bytes, content_encoding: str, max_bytes: int) -> bytes:
@@ -195,7 +213,7 @@ def _read_capped(stream, max_bytes: int) -> bytes:
     return body
 
 
-def _read_limited(response, max_bytes: int) -> bytes:
+def _read_limited(response, max_bytes: int, status: int) -> bytes:
     chunks = []
     total = 0
     while True:
@@ -206,4 +224,11 @@ def _read_limited(response, max_bytes: int) -> bytes:
         if total > max_bytes:
             raise FetchError('too_large', _('Страница больше допустимого размера'), retryable=False)
         chunks.append(piece)
+    if status not in (204, 304) and not response.headers.get('Transfer-Encoding'):
+        try:
+            declared = int(response.headers.get('Content-Length', ''))
+        except ValueError:
+            declared = 0
+        if total < declared:
+            raise IncompleteRead(b'', declared - total)
     return b''.join(chunks)
