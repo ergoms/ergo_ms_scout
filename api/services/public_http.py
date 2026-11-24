@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPHandler, HTTPSHandler, ProxyHandler
 
 from .errors import FetchError
-from .http_fetch import fetch_html, fetch_image, fetch_xml, fetch_text
+from .http_fetch import fetch_css, fetch_html, fetch_image, fetch_xml, fetch_text
 
 _IPV6_UNICAST = ipaddress.ip_network('2000::/3')
 _DNS_SLOTS = BoundedSemaphore(8)
@@ -57,9 +57,17 @@ def fetch_public_html(url, *, timeout_seconds, max_bytes, url_allowed=None, whol
     )
 
 
-def fetch_public_image(url, *, timeout_seconds, max_bytes):
+def fetch_public_image(url, *, timeout_seconds, max_bytes, url_allowed=None):
     return _fetch_public(
-        fetch_image, url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=None, whole_timeout=True,
+        fetch_image, url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed,
+        whole_timeout=True,
+    )
+
+
+def fetch_public_css(url, *, timeout_seconds, max_bytes, url_allowed=None):
+    return _fetch_public(
+        fetch_css, url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed,
+        whole_timeout=True,
     )
 
 

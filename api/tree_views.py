@@ -97,7 +97,7 @@ class _SnapshotReadView(BaseAPIView):
         return Response({'code': code, 'detail': detail, **({'path': path} if path else {})}, status=status, headers=headers)
 
     def _snapshot(self, request, public_id):
-        snapshot = VisualSnapshot.objects.filter(
+        snapshot = VisualSnapshot.objects.defer('editor_html').filter(
             public_id=public_id, user_public_id=request.user.public_id,
             created_at__gt=timezone.now() - SNAPSHOT_TTL,
         ).first()

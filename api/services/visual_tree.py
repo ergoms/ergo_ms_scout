@@ -120,6 +120,7 @@ class VisualTree:
         self.version = tree_version(snapshot)
         self.nodes = {}
         self.children = {None: []}
+        editor_tags = snapshot.editor_tags
         rendered = [el for el in document.document.iter() if el.get('data-scout-node')]
         if len(rendered) > MAX_NODES:
             raise ScoutError('tree_too_large', 'Слишком много узлов для дерева')
@@ -148,7 +149,8 @@ class VisualTree:
                     classes.append(value)
             self.nodes[uid] = {
                 'node_id': uid, 'parent_id': parent, 'child_index': len(siblings), 'depth': depth,
-                'tag': tag, 'rendered_tag': element.tag, 'element_id': element_id, 'classes': classes,
+                'tag': tag, 'rendered_tag': editor_tags.get(uid, element.tag),
+                'element_id': element_id, 'classes': classes,
                 'text_preview': '', 'children_count': 0, 'metadata_limited': limited,
             }
             siblings.append(uid)

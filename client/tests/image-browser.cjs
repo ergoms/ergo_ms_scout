@@ -28,8 +28,14 @@ module.exports = async (browser, output) => {
       page.evaluate(() => window.__scoutTest.calls.filter(([method]) => method === 'download'))
     assert.deepEqual(await downloads(), [])
     const frame = page.frameLocator('.scout-snapshot-frame iframe')
-    assert.equal(await frame.locator('[data-scout-image]').textContent(), 'Изображение')
+    const placeholder = frame.locator('span[data-scout-image]')
+    assert.equal(await placeholder.textContent(), 'Изображение')
+    assert.equal(await placeholder.evaluate((node) => getComputedStyle(node).cursor), 'pointer')
     assert.equal(await frame.locator('img,[src]').count(), 0)
+    await first.click()
+    await button.waitFor({ state: 'detached' })
+    await placeholder.click()
+    await button.waitFor()
 
     const [file] = await Promise.all([page.waitForEvent('download'), button.press('Enter')])
     assert.equal(file.suggestedFilename(), 'scout-n61.png')
@@ -99,16 +105,45 @@ module.exports = async (browser, output) => {
 
 async function checkImageCollection(page, ui, frame) {
   const externalRequests = []
-  page.on('request', (request) => {
-    if (request.url().startsWith('https://books.toscrape.com/'))
-      externalRequests.push(request.url())
+  await page.route('https://books.toscrape.com/**', (route) => {
+    externalRequests.push(route.request().url())
+    return route.abort()
   })
   await page.evaluate(() => {
     window.__scoutTest.calls.length = 0
+    window.__scoutTest.visual.styled = true
   })
-  const placeholder = frame.locator('[data-scout-image]')
-  assert.equal(await placeholder.evaluate((node) => getComputedStyle(node).cursor), 'pointer')
-  await placeholder.click()
+  // Chromium reports a CSP denial as a request failure before it reaches routing.
+  const [blockedStyle] = await Promise.all([
+    page.waitForEvent('requestfailed', (request) =>
+      request.url() === 'https://books.toscrape.com/blocked-style.png',
+    ),
+    ui.locator('.scout-visual-source button').click(),
+  ])
+  assert.match(blockedStyle.failure()?.errorText || '', /^(csp|net::ERR_BLOCKED_BY_CSP)$/)
+  const photo = frame.getByRole('img', { name: 'Cover', exact: true })
+  assert.equal(await photo.getAttribute('data-scout-node'), 'n61')
+  assert.equal(await photo.getAttribute('data-scout-image'), 'preview')
+  assert.deepEqual(
+    await photo.evaluate(async (node) => {
+      await node.decode()
+      const style = getComputedStyle(node)
+      const card = getComputedStyle(node.parentElement)
+      const { width, height } = node.getBoundingClientRect()
+      return {
+        width,
+        height,
+        padding: style.padding,
+        border: style.borderWidth,
+        cursor: style.cursor,
+        grid: card.display,
+        gap: card.columnGap,
+      }
+    }),
+    { width: 96, height: 72, padding: '0px', border: '0px', cursor: 'pointer', grid: 'grid', gap: '12px' },
+  )
+  assert.equal(await page.evaluate(() => window.__snapshotScriptRan), undefined)
+  await photo.click()
   await ui.locator('#scout-visual-name').fill('cover')
   const verify = ui.getByRole('button', { name: 'Проверить правило', exact: true })
   await verify.click()
@@ -136,7 +171,7 @@ async function checkImageCollection(page, ui, frame) {
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
   assert.equal(await saved.getByText(/Изображение/).count(), 0)
   await edit.click()
-  await placeholder.click()
+  await photo.click()
   await verify.click()
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
   await ui.getByRole('button', { name: /Получить предпросмотр/ }).click()
@@ -190,6 +225,6 @@ async function checkImageCollection(page, ui, frame) {
   await resultButton.click()
   await ui.getByText('Файл отсутствует или срок его хранения истёк.', { exact: true }).waitFor()
   console.log(
-    'Image collection passed: snapshot click, saved image field, preview, approval and result download.',
+    'Image collection passed: styled photo click, saved image field, preview, approval and result download.',
   )
 }

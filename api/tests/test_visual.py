@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from lxml import html
+from PIL import Image
 from rest_framework.test import APIClient
 
 from modules.scout.api.models import VisualSnapshot
@@ -94,6 +95,7 @@ class VisualSnapshotTests(TestCase):
             patch('modules.scout.api.services.visual_snapshots.fetch_public_html', return_value={
                 'body': _CATALOG, 'charset': 'utf-8', 'final_url': _URL,
             }) as fetch,
+            patch('modules.scout.api.services.visual_assets.VisualAssets.image', return_value=None),
             self.captureOnCommitCallbacks(execute=True),
         ):
             created = self.client.post(_BASE, {'url': _URL}, format='json')
@@ -138,6 +140,61 @@ class VisualSnapshotTests(TestCase):
             foreign_snapshot = other_client.get(path)
             self.assertEqual(foreign_snapshot.status_code, 404, foreign_snapshot.content)
             self.assertEqual(other_client.post(path + 'check/', {'record': record}, format='json').status_code, 404)
+
+    def test_styled_preview_preserves_the_same_selectable_image_and_saves_presentation(self):
+        source = b'''<!doctype html><html><head>
+            <link rel="stylesheet" href="/layout.css"></head><body class="catalog">
+            <form action="/submit"><input type="search" placeholder="Search"></form>
+            <article class="product" style="margin: 12px" onclick="activate()">
+                <a href="/photo"><img id="cover" src="/cover.png" alt="Cover" width="300"></a>
+                <img src="/missing.png" alt="Missing">
+            </article></body></html>'''
+        image = io.BytesIO()
+        Image.new('RGB', (2, 2)).save(image, format='PNG')
+        css = b'.product{display:flex} .product:before{content:"</style><script>activate()</script>"}'
+        assets = 'modules.scout.api.services.visual_assets'
+        with (
+            patch.dict('os.environ', {'SCOUT_TASK_RUNNER': 'inline'}),
+            patch('modules.scout.api.services.visual_snapshots.fetch_public_html', return_value={
+                'body': source, 'charset': 'utf-8', 'final_url': _URL,
+            }),
+            patch(assets + '.fetch_public_css', return_value={
+                'body': css, 'content_type': 'text/css', 'final_url': 'https://example.com/layout.css',
+            }) as fetch_css,
+            patch(assets + '.fetch_public_image', side_effect=[
+                {'body': image.getvalue(), 'content_type': 'image/png'},
+                FetchError('fetch_failed', 'Image unavailable', retryable=False),
+            ]) as fetch_image,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            created = self.client.post(_BASE, {'url': _URL}, format='json')
+        self.assertEqual(created.status_code, 202)
+        path = f"{_BASE}{created.data['public_id']}/"
+        ready = self.client.get(path)
+        self.assertEqual(ready.data['status'], 'ready')
+        rendered = html.fromstring(ready.data['html'])
+        self.assertEqual(rendered.xpath('//body')[0].get('class'), 'catalog')
+        self.assertIn('display:flex', rendered.xpath('string(//style)'))
+        self.assertEqual(rendered.xpath('//article')[0].get('style'), 'margin: 12px;')
+        self.assertFalse(rendered.xpath('//script | //@onclick | //@href | //@action'))
+        preview = rendered.xpath('//img[@id="cover"]')[0]
+        self.assertEqual(preview.get('data-scout-image'), 'preview')
+        self.assertTrue(preview.get('src').startswith('data:image/png;base64,'))
+        self.assertEqual(preview.get('width'), '300')
+        self.assertEqual(rendered.xpath('//span[@data-scout-image]')[0].text, 'Missing')
+
+        version, node_id = ready.data['tree_version'], preview.get('data-scout-node')
+        tree = self.client.get(path + f'tree/nodes/{node_id}/', {'tree_version': version})
+        self.assertEqual(tree.data['node']['rendered_tag'], 'img')
+        checked = self.client.post(path + 'check/', {
+            'tree_version': version,
+            'field': {'name': 'image', 'scope': 'page', 'many': False, 'node_id': node_id, 'value_source': 'image'},
+        }, format='json')
+        self.assertEqual(checked.status_code, 200, checked.data)
+        self.assertEqual(checked.data['field']['selector'], 'img#cover')
+        self.assertEqual(self.client.get(path).data['html'], ready.data['html'])
+        fetch_css.assert_called_once()
+        self.assertEqual(fetch_image.call_count, 2)
 
     def test_waiting_failed_and_expired_snapshot(self):
         snapshot = VisualSnapshot.objects.create(user_public_id=self.owner.public_id, source_url=_URL)

@@ -20,7 +20,7 @@ from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
 
 from .errors import FetchError
-from .http_fetch import fetch_html, fetch_image, fetch_xml, fetch_text
+from .http_fetch import fetch_css, fetch_html, fetch_image, fetch_xml, fetch_text
 from .proxy_profiles import ip_authority, load_proxy
 from .public_http import SocketDeadline, _public_address, public_url_allowed, resolve_tcp_addresses
 from .url_norm import canonical_host
@@ -208,10 +208,17 @@ def fetch_proxy_html(url, *, revision_id, owner, timeout_seconds, max_bytes, url
     )
 
 
-def fetch_proxy_image(url, *, revision_id, owner, timeout_seconds, max_bytes):
+def fetch_proxy_image(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None):
     return _fetch_proxy(
         fetch_image, url, revision_id=revision_id, owner=owner, timeout_seconds=timeout_seconds,
-        max_bytes=max_bytes, url_allowed=None, same_origin=False, whole_timeout=True,
+        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=False, whole_timeout=True,
+    )
+
+
+def fetch_proxy_css(url, *, revision_id, owner, timeout_seconds, max_bytes, url_allowed=None):
+    return _fetch_proxy(
+        fetch_css, url, revision_id=revision_id, owner=owner, timeout_seconds=timeout_seconds,
+        max_bytes=max_bytes, url_allowed=url_allowed, same_origin=False, whole_timeout=True,
     )
 
 
