@@ -153,17 +153,17 @@ async function checkImageCollection(page, ui, frame) {
       nativeHit: 'n62',
     },
   )
-  const clickPhoto = async () => {
-    await photo.scrollIntoViewIfNeeded()
-    const box = await photo.boundingBox()
-    assert.ok(box)
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-  }
+  const decoration = frame.locator('.photo-decoration')
+  const lastCheck = () =>
+    page.evaluate(
+      () => window.__scoutTest.calls.filter((call) => call[1].endsWith('/check/')).at(-1)[2].field,
+    )
   assert.equal(await page.evaluate(() => window.__snapshotScriptRan), undefined)
-  await clickPhoto()
+  await decoration.click()
   await ui.locator('#scout-visual-name').fill('cover')
   const verify = ui.getByRole('button', { name: 'Проверить правило', exact: true })
   await verify.click()
+  assert.equal((await lastCheck()).node_id, 'n61')
   await ui
     .getByText('Во время сбора Scout сохранит выбранные изображения.', { exact: false })
     .waitFor()
@@ -173,10 +173,6 @@ async function checkImageCollection(page, ui, frame) {
   const edit = saved.getByRole('button', { name: 'Изменить', exact: true })
   await edit.click()
   await verify.click()
-  const lastCheck = () =>
-    page.evaluate(
-      () => window.__scoutTest.calls.filter((call) => call[1].endsWith('/check/')).at(-1)[2].field,
-    )
   assert.equal((await lastCheck()).value_source, 'image')
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
 
@@ -188,8 +184,12 @@ async function checkImageCollection(page, ui, frame) {
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
   assert.equal(await saved.getByText(/Изображение/).count(), 0)
   await edit.click()
-  await clickPhoto()
+  await decoration.click()
   await verify.click()
+  assert.equal((await lastCheck()).node_id, 'n61')
+  await ui
+    .getByText('Во время сбора Scout сохранит выбранные изображения.', { exact: false })
+    .waitFor()
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
   await ui.getByRole('button', { name: /Получить предпросмотр/ }).click()
   await ui.getByRole('heading', { name: 'Предпросмотр готов' }).waitFor()
