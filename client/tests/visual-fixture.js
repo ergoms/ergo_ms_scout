@@ -31,6 +31,14 @@ export function installVisualFixture(apiClient, fixture, result) {
     text_preview: '',
   }
   nodes.push(coverNode)
+  const decorationNode = {
+    ...coverNode,
+    node_id: 'n62',
+    child_index: 3,
+    tag: 'u',
+    rendered_tag: 'u',
+  }
+  const snapshotNodes = () => (visual.styled ? [...nodes, decorationNode] : nodes)
   const envelope = (data) =>
     result({ snapshot_public_id: `visual-${visual.count}`, tree_version: version, ...data })
   function editorHtml(styled) {
@@ -39,11 +47,13 @@ export function installVisualFixture(apiClient, fixture, result) {
     const styles = styled
       ? `<style>
           .product_pod { display: grid; grid-template-columns: 96px 1fr; column-gap: 12px; }
+          .cover, .photo-decoration { grid-area: 2 / 1; }
           .cover { width: 96px; height: 72px; background-image: url(https://books.toscrape.com/blocked-style.png); }
+          .photo-decoration { z-index: 1; }
         </style>`
       : ''
     const cover = styled
-      ? `<img class="cover" data-scout-node="n61" data-scout-image="preview" alt="Cover" src="data:image/png;base64,${coverPng}">`
+      ? `<img class="cover" data-scout-node="n61" data-scout-image="preview" alt="Cover" src="data:image/png;base64,${coverPng}"><u class="photo-decoration" data-scout-node="n62"></u>`
       : '<span data-scout-node="n61" data-scout-image>Изображение</span>'
     const books = Array.from({ length: 20 }, (_, index) => {
       const card = index * 3 + 1
@@ -85,29 +95,30 @@ export function installVisualFixture(apiClient, fixture, result) {
     fixture.calls.push(['get', url])
     if (url.includes('/tree/')) {
       const params = args[0] || {}
+      const currentNodes = snapshotNodes()
       if (visual.treeError)
         return { success: false, status: visual.treeError, data: { code: 'tree_version_changed' } }
       const id = url.match(/\/nodes\/(n\d+)\//)?.[1]
       if (id) {
-        const node = nodes.find((item) => item.node_id === id)
+        const node = currentNodes.find((item) => item.node_id === id)
         return defer(
           'node',
           envelope({
             node,
             ancestors: node.parent_id
-              ? [nodes.find((item) => item.node_id === node.parent_id)]
+              ? [currentNodes.find((item) => item.node_id === node.parent_id)]
               : [],
           }),
         )
       }
-      const items = nodes.filter((node) => node.parent_id === (params.parent_id || null))
+      const items = currentNodes.filter((node) => node.parent_id === (params.parent_id || null))
       return defer(
         'tree',
         envelope({
           items,
           parent_id: params.parent_id || null,
           total_count: items.length,
-          node_count: nodes.length,
+          node_count: currentNodes.length,
           previous_cursor: null,
           next_cursor: null,
         }),
@@ -126,7 +137,7 @@ export function installVisualFixture(apiClient, fixture, result) {
     if (!url.startsWith('scout/visual-snapshots/')) return originalPost(url, body, ...args)
     fixture.calls.push(['post', url, JSON.parse(JSON.stringify(body))])
     if (url.endsWith('/tree/search/')) {
-      const items = nodes.filter((node) =>
+      const items = snapshotNodes().filter((node) =>
         [node.tag, ...node.classes, node.text_preview].some((value) =>
           value.toLowerCase().includes(body.q.toLowerCase()),
         ),
@@ -143,6 +154,7 @@ export function installVisualFixture(apiClient, fixture, result) {
     if (url === 'scout/visual-snapshots/') {
       visual.count += 1
       coverNode.rendered_tag = visual.styled ? 'img' : 'span'
+      nodes[0].children_count = visual.styled ? 4 : 3
       const publicId = `visual-${visual.count}`
       snapshotUrls.set(publicId, visual.redirects[body.url] || body.url)
       return defer('create', result({ public_id: publicId, status: 'loading' }))

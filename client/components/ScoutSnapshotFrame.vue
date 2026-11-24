@@ -93,10 +93,29 @@ function attach() {
     focused.tabIndex = 0
     focused.focus()
   }
+  function hitNode(event) {
+    const element = event.target.closest('[data-scout-node]')
+    if (
+      !element ||
+      !Number.isFinite(event.clientX) ||
+      element.textContent.trim() ||
+      element.matches(
+        'a, button, img, input, label, option, select, summary, textarea, [role="button"], [role="img"], [role="link"]',
+      )
+    ) return element
+
+    // An empty decoration can sit over a photo while sharing its container.
+    return document.elementsFromPoint(event.clientX, event.clientY).find((hit) =>
+      hit.parentElement === element.parentElement &&
+      hit.matches('img[data-scout-node][data-scout-image="preview"]') &&
+      hit.complete &&
+      hit.naturalWidth > 0,
+    ) || element
+  }
   const click = (event) => {
     event.preventDefault()
     event.stopPropagation()
-    const element = event.target.closest('[data-scout-node]')
+    const element = hitNode(event)
     if (element) {
       focus(element)
       select(element)
@@ -123,7 +142,7 @@ function attach() {
   let hovered = ''
   const hover = (event) => {
     if (!props.prototype) return
-    const id = event.target.closest('[data-scout-node]')?.getAttribute('data-scout-node') || ''
+    const id = hitNode(event)?.getAttribute('data-scout-node') || ''
     if (id !== hovered) {
       hovered = id
       emit('candidate', id)

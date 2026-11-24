@@ -129,7 +129,8 @@ async function checkImageCollection(page, ui, frame) {
       await node.decode()
       const style = getComputedStyle(node)
       const card = getComputedStyle(node.parentElement)
-      const { width, height } = node.getBoundingClientRect()
+      const { x, y, width, height } = node.getBoundingClientRect()
+      const nativeHit = document.elementFromPoint(x + width / 2, y + height / 2)
       return {
         width,
         height,
@@ -138,12 +139,28 @@ async function checkImageCollection(page, ui, frame) {
         cursor: style.cursor,
         grid: card.display,
         gap: card.columnGap,
+        nativeHit: nativeHit?.getAttribute('data-scout-node'),
       }
     }),
-    { width: 96, height: 72, padding: '0px', border: '0px', cursor: 'pointer', grid: 'grid', gap: '12px' },
+    {
+      width: 96,
+      height: 72,
+      padding: '0px',
+      border: '0px',
+      cursor: 'pointer',
+      grid: 'grid',
+      gap: '12px',
+      nativeHit: 'n62',
+    },
   )
+  const clickPhoto = async () => {
+    await photo.scrollIntoViewIfNeeded()
+    const box = await photo.boundingBox()
+    assert.ok(box)
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+  }
   assert.equal(await page.evaluate(() => window.__snapshotScriptRan), undefined)
-  await photo.click()
+  await clickPhoto()
   await ui.locator('#scout-visual-name').fill('cover')
   const verify = ui.getByRole('button', { name: 'Проверить правило', exact: true })
   await verify.click()
@@ -171,7 +188,7 @@ async function checkImageCollection(page, ui, frame) {
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
   assert.equal(await saved.getByText(/Изображение/).count(), 0)
   await edit.click()
-  await photo.click()
+  await clickPhoto()
   await verify.click()
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
   await ui.getByRole('button', { name: /Получить предпросмотр/ }).click()
@@ -225,6 +242,6 @@ async function checkImageCollection(page, ui, frame) {
   await resultButton.click()
   await ui.getByText('Файл отсутствует или срок его хранения истёк.', { exact: true }).waitFor()
   console.log(
-    'Image collection passed: styled photo click, saved image field, preview, approval and result download.',
+    'Image collection passed: click through photo decoration, saved image field, preview, approval and result download.',
   )
 }
