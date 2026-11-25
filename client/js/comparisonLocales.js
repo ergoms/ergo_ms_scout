@@ -1,5 +1,16 @@
 export default {
   ru: {
+    priceChanges: 'Изменения цены',
+    countLabels: {
+      changed: 'Изменилось',
+      unchanged: 'Без изменений',
+      added: 'Появилось',
+      not_seen: 'Не обнаружено',
+    },
+    linksTitle: 'Ссылки на результаты',
+    chooseField: 'Что сравнить',
+    changesTitle: 'Изменения поля «{field}»',
+    otherField: 'Выбрать другое поле',
     title: 'Сравнение двух сборов',
     open: 'Сравнить результаты',
     back: 'Вернуться к Scout',
@@ -124,6 +135,17 @@ export default {
     },
   },
   en: {
+    priceChanges: 'Price changes',
+    countLabels: {
+      changed: 'Changed',
+      unchanged: 'Unchanged',
+      added: 'Added',
+      not_seen: 'Not seen',
+    },
+    linksTitle: 'Result links',
+    chooseField: 'Field to compare',
+    changesTitle: 'Changes to {field}',
+    otherField: 'Choose another field',
     title: 'Compare two collections',
     open: 'Compare results',
     back: 'Back to Scout',
@@ -246,6 +268,17 @@ export default {
     },
   },
   fr: {
+    priceChanges: 'Évolution du prix',
+    countLabels: {
+      changed: 'Modifié',
+      unchanged: 'Identique',
+      added: 'Ajouté',
+      not_seen: 'Non observé',
+    },
+    linksTitle: 'Liens des résultats',
+    chooseField: 'Champ à comparer',
+    changesTitle: 'Variations de {field}',
+    otherField: 'Choisir un autre champ',
     title: 'Comparer deux collectes',
     open: 'Comparer les résultats',
     back: 'Retour à Scout',

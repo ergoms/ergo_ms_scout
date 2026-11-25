@@ -67,6 +67,10 @@ module.exports = async (browser, output) => {
     assert(page.url().includes('field=price'))
     const rows = page.locator('.scout-comparison-changes > li')
     assert.equal(await rows.count(), 1)
+    await page.getByRole('heading', { name: 'Изменения цены', exact: true }).waitFor()
+    const sources = rows.first().getByRole('table')
+    assert.equal(await sources.getByRole('row').count(), 3)
+    assert.equal(await sources.getByRole('link').count(), 2)
     assert((await rows.first().innerText()).includes('1250.00 RUB'))
     assert((await rows.first().innerText()).includes('1350.00 RUB'))
     for (const side of ['До', 'После']) {
@@ -93,6 +97,8 @@ module.exports = async (browser, output) => {
       await page.getByRole('button', { name: 'Загрузить следующую порцию', exact: true }).count(),
       0,
     )
+    await page.getByRole('button', { name: 'Выбрать другое поле', exact: true }).click()
+    assert(await field.evaluate((input) => input === document.activeElement))
     await field.fill('zero')
     await compare.click()
     await rows.first().waitFor()

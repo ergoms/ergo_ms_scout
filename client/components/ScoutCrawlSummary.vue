@@ -29,7 +29,7 @@ function patterns(rules) {
 </script>
 
 <template>
-  <div class="border rounded p-3 mb-3">
+  <div class="scout-crawl-summary">
     <p class="mb-1">{{ t('scout.flow.crawlBounds', { hosts: crawl.allowed_hosts?.join(', '), depth: crawl.max_depth, pages: crawl.max_pages }) }}</p>
     <p class="mb-1">{{ t('scout.flow.crawlBudget', { seconds: crawl.max_seconds, bytes: crawl.max_total_bytes, frontier: crawl.frontier_cap, delay: crawl.fetch_delay_ms, parallel: crawl.parallel_fetch }) }}</p>
     <p v-if="crawl.visit?.length || crawl.extract_on?.length" class="mb-1">{{ t('scout.flow.crawlFilters', { visit: patterns(crawl.visit) || '/', extract: patterns(crawl.extract_on) || '/' }) }}</p>

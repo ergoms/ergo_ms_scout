@@ -51,7 +51,7 @@ async function main() {
     await page.goto(pathToFileURL(path.join(output, 'fixture.html')).href)
     const ui = page.locator('.scout-workflow')
     async function checkWidths(name) {
-      for (const width of [1440, 768, 360, 320]) {
+      for (const width of [1440, 768, 390, 360, 320]) {
         await page.setViewportSize({ width, height: 1100 })
         const box = await ui.evaluate((element) => ({
           width: element.clientWidth,
@@ -73,20 +73,18 @@ async function main() {
       await page.setViewportSize({ width: 1440, height: 1100 })
       await page.screenshot({ path: path.join(output, `${name}-desktop.png`), fullPage: true })
     }
-    await ui.getByRole('heading', { name: 'Как подготовим задание?' }).waitFor()
+    await ui.getByRole('heading', { name: 'Новое задание', exact: true }).waitFor()
     await checkWidths('modes')
 
     // Switching from an untouched AI form to manual keeps the source without calling the model.
-    await ui.locator('.scout-mode').nth(2).click()
-    await ui.getByRole('button', { name: 'Далее: источник и правила' }).click()
+    await ui.getByRole('button', { name: 'Описать задачу', exact: true }).click()
     await ui.getByLabel('URL примера').fill('https://events.example/list')
     await ui.locator('#scout-goal').fill('Собери названия мероприятий')
     await ui.getByLabel('URL примера').fill('')
     await ui.getByRole('button', { name: 'Перейти к ручным правилам' }).click()
     assert.equal(await ui.locator('#scout-url').inputValue(), '')
     await ui.getByRole('button', { name: 'Изменить способ', exact: true }).click()
-    await ui.locator('.scout-mode').nth(2).click()
-    await ui.getByRole('button', { name: 'Далее: источник и правила' }).click()
+    await ui.getByRole('button', { name: 'Описать задачу', exact: true }).click()
     await ui.getByLabel('URL примера').fill('https://events.example/list')
     await ui.getByRole('button', { name: 'Перейти к ручным правилам' }).click()
     assert.equal(await ui.locator('#scout-url').inputValue(), 'https://events.example/list')
@@ -154,7 +152,7 @@ async function main() {
       window.__scoutTest.run.record_count = 205
       window.__scoutTest.setStatus('completed')
     })
-    await ui.getByRole('heading', { name: 'Завершён', exact: true }).waitFor()
+    await ui.getByRole('heading', { name: 'Сбор завершён', exact: true }).waitFor()
     const scheduleSummary = ui.locator('.scout-schedule summary').first()
     await scheduleSummary.click()
     const scheduleTime = ui.getByLabel('Время каждый день', { exact: true })

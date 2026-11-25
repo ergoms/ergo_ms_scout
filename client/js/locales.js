@@ -1,9 +1,11 @@
 import comparisonLocales from './comparisonLocales.js'
+import designLocales from './designLocales.js'
 import retentionLocales from './retentionLocales.js'
 import scheduleLocales from './scheduleLocales.js'
 import productLocales from './productLocales.js'
 import workspaceLocales from './workspaceLocales.js'
 import visualLocales from './visualLocales.js'
+import visualDesignLocales from './visualDesignLocales.js'
 import inspectorLocales from '../prototypes/inspectorLocales.js'
 
 export default {
@@ -14,7 +16,9 @@ export default {
       schedule: scheduleLocales.ru,
       retention: retentionLocales.ru,
       comparison: comparisonLocales.ru,
+      design: designLocales.ru,
       visual: visualLocales.ru,
+      visualDesign: visualDesignLocales.ru,
       inspector: inspectorLocales.ru,
       routes: { home: 'Сбор данных' },
       title: 'SCOUT',
@@ -152,7 +156,9 @@ export default {
       schedule: scheduleLocales.en,
       retention: retentionLocales.en,
       comparison: comparisonLocales.en,
+      design: designLocales.en,
       visual: visualLocales.en,
+      visualDesign: visualDesignLocales.en,
       inspector: inspectorLocales.en,
       routes: { home: 'Data collection' },
       title: 'SCOUT',
@@ -290,7 +296,9 @@ export default {
       schedule: scheduleLocales.fr,
       retention: retentionLocales.fr,
       comparison: comparisonLocales.fr,
+      design: designLocales.fr,
       visual: visualLocales.fr,
+      visualDesign: visualDesignLocales.fr,
       inspector: inspectorLocales.fr,
       routes: { home: 'Collecte de données' },
       title: 'SCOUT',

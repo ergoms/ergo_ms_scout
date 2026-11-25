@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick } from 'vue'
+import { ChevronDown, ChevronRight, ListTree, Search } from '@lucide/vue'
 import { useAppI18n } from '@/i18n/useAppI18n.js'
 import { nodeLabel } from './useInspectorTree.js'
 const props = defineProps({ tree: Object, selected: String })
@@ -48,29 +49,30 @@ async function key(event, node) {
 </script>
 <template>
   <section class="scout-prototype-tree" :aria-label="t('scout.inspector.structure')">
-    <h2 class="h6">{{ t('scout.inspector.structure') }}</h2>
+    <header class="scout-visual-panel-header">
+      <h2 class="scout-visual-panel-title">{{ t('scout.inspector.structure') }}</h2>
+      <ListTree :size="16" aria-hidden="true" />
+    </header>
     <form class="scout-prototype-search" @submit.prevent="tree.search()">
-      <label class="scout-input-label" for="scout-dom-search"
-        >{{ t('scout.inspector.searchLabel')
-        }}<input
-          id="scout-dom-search"
-          :value="tree.query.value"
-          @input="tree.setQuery($event.target.value)"
-          class="form-control"
-          type="search"
-          maxlength="200"
-      /></label>
+      <label class="visually-hidden" for="scout-dom-search">{{ t('scout.inspector.searchLabel') }}</label>
       <button
-        class="btn btn-outline-secondary btn-sm"
+        class="btn scout-prototype-search-button"
         type="submit"
         :disabled="tree.searching.value || tree.invalid.value"
+        :aria-label="t('scout.inspector.search')"
       >
-        {{ t('scout.inspector.search') }}
+        <Search :size="16" aria-hidden="true" />
       </button>
+      <input
+        id="scout-dom-search"
+        :value="tree.query.value"
+        :placeholder="t('scout.visualDesign.searchPlaceholder')"
+        @input="tree.setQuery($event.target.value)"
+        class="form-control"
+        type="search"
+        maxlength="200"
+      />
     </form>
-    <p class="scout-muted small">
-      {{ t('scout.inspector.treeCount', { count: tree.nodeCount.value }) }}
-    </p>
     <p v-if="tree.loading.value || tree.searching.value" role="status">
       {{ t('scout.inspector.loading') }}
     </p>
@@ -111,14 +113,6 @@ async function key(event, node) {
         </button>
       </div>
     </div>
-    <button
-      v-if="selected"
-      type="button"
-      class="btn btn-outline-secondary btn-sm mb-2"
-      @click="backToSelection"
-    >
-      {{ t('scout.inspector.backToSelection') }}
-    </button>
     <ul class="scout-prototype-nodes" role="tree" :aria-label="t('scout.inspector.structure')">
       <!-- eslint-disable-next-line vuejs-accessibility/interactive-supports-focus -- Roving tabindex keeps one visible tree node in the tab order; keyboard navigation is browser-tested. -->
       <li
@@ -149,12 +143,13 @@ async function key(event, node) {
           "
           @click.stop="tree.toggle(node.node_id)"
         >
-          {{ tree.expanded.value.has(node.node_id) ? '−' : '+' }}
+          <ChevronDown v-if="tree.expanded.value.has(node.node_id)" :size="13" aria-hidden="true" />
+          <ChevronRight v-else :size="13" aria-hidden="true" />
         </button>
-        <span
-          >{{ nodeLabel(node)
-          }}<small>{{ node.text_preview || t('scout.inspector.noText') }}</small></span
-        >
+        <span class="scout-prototype-node-text">
+          <code>{{ nodeLabel(node) }}</code>
+          <small v-if="node.text_preview">{{ node.text_preview }}</small>
+        </span>
       </li>
     </ul>
     <div
@@ -186,6 +181,12 @@ async function key(event, node) {
           {{ t('scout.inspector.next') }}
         </button></template
       >
+    </div>
+    <div class="scout-prototype-tree-footer">
+      <button v-if="selected" type="button" class="btn btn-link btn-sm" @click="backToSelection">
+        {{ t('scout.inspector.backToSelection') }}
+      </button>
+      <small v-else>{{ t('scout.inspector.treeCount', { count: tree.nodeCount.value }) }}</small>
     </div>
   </section>
 </template>

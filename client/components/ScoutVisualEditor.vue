@@ -1,8 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { Check, ChevronDown, Globe, Image as ImageIcon, Info, MousePointer2, RefreshCw, TriangleAlert } from '@lucide/vue'
 import FormCard from '@/components/FormCard.vue'
 import FormField from '@/components/FormField.vue'
-import SpinnerLoading from '@/components/SpinnerLoading.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
 import { useAppI18n } from '@/i18n/useAppI18n.js'
 import { useVisualSnapshot } from '../js/useVisualSnapshot.js'
@@ -16,18 +16,13 @@ import { useInspectorTree, nodeLabel } from '../prototypes/useInspectorTree.js'
 
 const form = defineModel({ type: Object, required: true })
 const props = defineProps({ disabled: Boolean, inspectorPrototype: Boolean })
-const emit = defineEmits(['valid', 'preview', 'manual'])
+const emit = defineEmits(['valid', 'preview', 'manual', 'presentation', 'back'])
 const { t } = useAppI18n()
+const design = (key, ...args) => t(`scout.visualDesign.${key}`, ...args)
 const active = ref(true)
 const editor = ref(null)
 const compact = ref(false)
-const actionInset = reactive({ left: 0, right: 0 })
-function updateActionInset() {
-  const box = editor.value?.getBoundingClientRect()
-  if (!box) return
-  actionInset.left = Math.max(0, box.left)
-  actionInset.right = Math.max(0, window.innerWidth - box.right)
-}
+const urlInput = ref(null)
 const widths = reactive({ tree: 240, field: 340 })
 let resizeObserver
 let dragCleanup = () => {}
@@ -93,10 +88,10 @@ function tabKey(event, index) {
 }
 const manualRule = ref(false)
 const primaryLabel = computed(() =>
-  status.value === 'loading'
-    ? t('scout.visual.loading')
-    : status.value !== 'ready' || tree.invalid.value
-      ? t('scout.product.loadSnapshot')
+  !snapshotReady.value
+    ? snapshotExpired.value
+      ? design('reload')
+      : t('scout.visual.load')
       : checking.value
         ? t('scout.visual.checking')
         : checked.value
@@ -107,11 +102,14 @@ const primaryLabel = computed(() =>
                   ? 'scout.product.saveChanges'
                   : 'scout.visual.acceptField',
             )
-          : t('scout.product.check'),
+          : valid.value && !canCancel.value
+            ? `${design('preview')} · ${design('fieldCount', fields.value.length)}`
+            : t('scout.product.check'),
 )
 const primaryDisabled = computed(() => {
   if (props.disabled || status.value === 'loading' || checking.value) return true
-  if (status.value !== 'ready' || tree.invalid.value) return false
+  if (!snapshotReady.value) return false
+  if (valid.value && !canCancel.value) return false
   if (tree.loading.value) return true
   return checked.value
     ? !acceptable.value || (target.value === 'field' && duplicateName.value)
@@ -121,24 +119,29 @@ const primaryDisabled = computed(() => {
           : !selectedNode.value)
 })
 function primaryAction() {
-  if (status.value !== 'ready' || tree.invalid.value) {
+  if (!snapshotReady.value) {
     load()
     return
   }
   if (checked.value) accept()
+  else if (valid.value && !canCancel.value) emit('preview')
   else verify(manualRule.value ? undefined : selectedNode.value)
+}
+async function cancelLoading() {
+  // Invalidate polling and late responses. The server expires abandoned snapshots normally.
+  active.value = false
+  active.value = true
+  await nextTick()
+  urlInput.value?.focus()
 }
 onMounted(() => {
   resizeObserver = new ResizeObserver(([entry]) => {
     compact.value = entry.contentRect.width < 1000
-    updateActionInset()
   })
   if (editor.value) resizeObserver.observe(editor.value)
-  window.addEventListener('resize', updateActionInset)
 })
 onUnmounted(() => {
   resizeObserver?.disconnect()
-  window.removeEventListener('resize', updateActionInset)
   dragCleanup()
 })
 const url = computed(() => form.value.url)
@@ -159,10 +162,13 @@ const tree = useInspectorTree(
   snapshot,
   computed(() => props.inspectorPrototype),
 )
+const snapshotExpired = computed(() => status.value === 'expired' || tree.invalid.value)
+const snapshotReady = computed(() => status.value === 'ready' && !tree.invalid.value)
 const recordSelector = ref(form.value.recordSelector || '')
 const draft = reactive({ name: 'field_1', selector: '', many: false, scope: 'page' })
 const editing = ref(-1)
 const canCancel = computed(() => editing.value >= 0 || manualRule.value || !!selectedNode.value)
+const lastAccepted = ref(null)
 const result = ref(null)
 const checkedStamp = ref('')
 const acceptedStamp = ref('')
@@ -225,6 +231,47 @@ function fieldVerified(field) {
   )
 }
 const pendingFields = computed(() => fields.value.filter((field) => !fieldVerified(field)))
+const acceptedField = computed(() => {
+  if (canCancel.value || target.value !== 'field' || !lastAccepted.value) return null
+  return fields.value.find((field) => field.name === lastAccepted.value.name && fieldVerified(field)) || null
+})
+const displayedNodeId = computed(() => selectedNode.value || (acceptedField.value ? lastAccepted.value.nodeId : ''))
+const displayedNode = computed(() => {
+  const detail = acceptedField.value ? lastAccepted.value.detail : tree.detail.value
+  return detail?.node.node_id === displayedNodeId.value ? detail : null
+})
+const displayedLabel = computed(() => {
+  const node = displayedNode.value?.node
+  return node ? nodeLabel(node) : acceptedField.value?.selector || draft.selector
+})
+const displayedPath = computed(() => {
+  const parent = displayedNode.value?.ancestors.at(-1)
+  return parent ? `${nodeLabel(parent)} › ${nodeLabel(displayedNode.value.node)}` : displayedLabel.value
+})
+const displayedImage = computed(() => {
+  const detail = displayedNode.value
+  return detail?.node.tag === 'img' || (acceptedField.value || (checked.value ? result.value.field : null))?.value_source === 'image'
+})
+const canDownloadImage = computed(() => {
+  const detail = displayedNode.value
+  return snapshotReady.value && !tree.loading.value && detail?.node.tag === 'img' &&
+    detail.snapshot_public_id === snapshot.value?.public_id && detail.tree_version === snapshot.value.tree_version
+})
+const showDraft = computed(() => !props.inspectorPrototype || canCancel.value || target.value === 'record')
+const presentation = computed(() => {
+  const title = design('title')
+  const state = (key, tone, heading = title) => ({ title: heading, status: design(key), tone })
+  if (snapshotExpired.value) return state('needsSnapshot', 'warning', design('expiredTitle'))
+  if (status.value === 'loading') return state('loading', 'info')
+  if (!snapshotReady.value && error.value) return state('loadError', 'danger')
+  if (snapshotReady.value && error.value) return state('ruleError', 'danger', design('ruleErrorTitle'))
+  if (checked.value && acceptable.value) return state('checked', 'success')
+  if (checked.value) return state('noMatches', 'warning')
+  if (canCancel.value && snapshotReady.value) return state('unchecked', 'warning')
+  if (snapshotReady.value && fields.value.length)
+    return { title, status: design('savedCount', fields.value.length), tone: pendingFields.value.length ? 'warning' : 'success' }
+  return snapshotReady.value ? state('ready', 'success') : state('waiting', 'neutral')
+})
 const previewHint = computed(() => {
   if (props.disabled) return t('scout.product.previewWait')
   if (status.value === 'loading') return t('scout.visual.loading')
@@ -265,6 +312,7 @@ const highlighted = computed(() => [
 ])
 
 watch(valid, (value) => emit('valid', value), { immediate: true })
+watch(presentation, (value) => emit('presentation', value), { immediate: true })
 watch(
   candidateStamp,
   () => {
@@ -272,6 +320,7 @@ watch(
     invalidateCheck()
     result.value = null
     checkedStamp.value = ''
+    if (snapshotReady.value) error.value = null
   },
   { flush: 'sync' },
 )
@@ -283,6 +332,7 @@ watch(
     selectedNode.value = ''
     hoveredNode.value = ''
     cardNodeIds.value = []
+    lastAccepted.value = null
     acceptedStamp.value = ''
     cardStamp.value = ''
     verifiedFields.clear()
@@ -297,6 +347,7 @@ watch(
     verifiedFields.clear()
     acceptedStamp.value = ''
     cardStamp.value = ''
+    lastAccepted.value = null
   },
 )
 watch(target, () => {
@@ -349,6 +400,7 @@ function select(nodes) {
 }
 function chooseNode(id) {
   if (props.inspectorPrototype && tree.invalid.value) return
+  error.value = null
   selectedNode.value = id
   manualRule.value = false
   if (props.inspectorPrototype) {
@@ -391,6 +443,7 @@ function cancelSelection() {
   ancestors.value = []
   result.value = null
   checkedStamp.value = ''
+  if (snapshotReady.value) error.value = null
   invalidateCheck()
   tree.clearSelection()
   editing.value = -1
@@ -446,7 +499,12 @@ function accept() {
     )
   )
     acceptedStamp.value = visualPlanStamp(form.value)
+  const matchIds = summary.value.nodeIds
+  const nodeId = matchIds.includes(selectedNode.value) ? selectedNode.value : matchIds[0] || ''
+  const detail = displayedNode.value?.node.node_id === nodeId ? displayedNode.value : null
+  const selection = { name: field.name, nodeId, detail }
   cancelSelection()
+  lastAccepted.value = selection
 }
 const duplicateName = computed(() =>
   form.value.fields.some(
@@ -480,6 +538,11 @@ function removeField(index) {
       ? visualPlanStamp(form.value)
       : ''
 }
+async function addAnotherField() {
+  lastAccepted.value = null
+  cancelSelection()
+  await selectTab('page')
+}
 </script>
 
 <template>
@@ -490,46 +553,105 @@ function removeField(index) {
     :style="{
       '--scout-tree-width': widths.tree + 'px',
       '--scout-field-width': widths.field + 'px',
-      '--scout-action-left': actionInset.left + 'px',
-      '--scout-action-right': actionInset.right + 'px',
     }"
     :class="{ 'scout-inspector-prototype': inspectorPrototype }"
     :data-prototype-tab="prototypeTab"
     :data-tree="showTree"
     :data-inspector="showInspector"
   >
-    <FormCard>
-      <FormField
-        :label="t('scout.url')"
-        label-for="scout-visual-url"
-        :hint="t('scout.visual.sourceHint')"
-      >
-        <div class="scout-visual-source">
+    <div v-if="snapshotExpired" class="scout-visual-notice" data-tone="warning" role="alert">
+      <TriangleAlert :size="18" aria-hidden="true" />
+      <div>
+        <strong>{{ design('expired') }}</strong>
+        <p>{{ tree.invalid.value && tree.error.value ? t(`scout.inspector.${tree.error.value}`) : t('scout.visual.expired') }}</p>
+      </div>
+    </div>
+    <FormCard class="scout-visual-source-card" :data-ready="snapshotReady">
+      <div class="scout-visual-source">
+        <h2 v-if="!snapshotReady" class="scout-visual-panel-title">{{ design('source') }}</h2>
+        <Globe v-if="snapshotReady" class="scout-visual-source-icon" :size="18" aria-hidden="true" />
+        <FormField
+          class="scout-visual-url"
+          :label="t('scout.url')"
+          label-for="scout-visual-url"
+          :hint="status === 'idle' ? design('sourceHint') : undefined"
+        >
           <input
             id="scout-visual-url"
+            ref="urlInput"
             v-model="form.url"
             class="form-control"
             type="url"
             :disabled="disabled"
-          /><button
+            @keydown.enter.prevent="!disabled && status !== 'loading' && load()"
+          />
+        </FormField>
+        <template v-if="snapshotReady">
+          <span class="scout-visual-badge" data-tone="success">{{ design('ready') }}</span>
+          <button
             type="button"
-            class="btn btn-primary"
-            :disabled="disabled || status === 'loading'"
+            class="btn btn-outline-secondary scout-visual-refresh"
+            :disabled="disabled"
             @click="load"
           >
-            {{ t('scout.visual.load') }}
+            <RefreshCw class="scout-visual-refresh-icon" :size="17" aria-hidden="true" />
+            <span class="scout-visual-refresh-label">{{ design('refresh') }}</span>
           </button>
+        </template>
+        <div v-if="status === 'idle' && !snapshotExpired" class="scout-visual-source-details">
+          <FormField :label="t('scout.jobTitle')" label-for="scout-visual-title">
+            <input id="scout-visual-title" v-model="form.title" class="form-control" :disabled="disabled" />
+          </FormField>
+          <FormField :label="t('scout.product.proxy')" label-for="scout-visual-connection">
+            <input id="scout-visual-connection" :value="design(form.proxyRevision ? 'withProxy' : 'direct')" class="form-control" readonly />
+          </FormField>
         </div>
-      </FormField>
+      </div>
     </FormCard>
-    <p v-if="status === 'loading'" class="scout-visual-status" role="status">
-      <SpinnerLoading />{{ t('scout.visual.loading') }}
-    </p>
-    <div v-if="error" class="alert alert-warning mt-3" role="alert">
-      {{ t(`scout.visual.${error.key}`) }}
-      <p v-if="error.detail" class="small mb-0">{{ error.detail }}</p>
+    <template v-if="status === 'loading'">
+      <div class="scout-visual-notice" data-tone="info" role="status">
+        <Info :size="18" aria-hidden="true" />
+        <div>
+          <strong>{{ design('waitingSnapshot') }}</strong>
+          <p>{{ design('loadingHint') }}</p>
+        </div>
+      </div>
+      <FormCard class="scout-visual-placeholder" aria-busy="true">
+        <h2 class="scout-visual-panel-title">{{ t('scout.visual.snapshotTitle') }}</h2>
+        <div class="scout-visual-loading-surface" aria-hidden="true" />
+      </FormCard>
+    </template>
+    <div v-else-if="error && !snapshotReady && !snapshotExpired" class="scout-visual-notice" data-tone="danger" role="alert">
+      <TriangleAlert :size="18" aria-hidden="true" />
+      <div>
+        <strong>{{ design('loadError') }}</strong>
+        <p>{{ t(`scout.visual.${error.key}`) }}</p>
+        <p v-if="error.detail">{{ error.detail }}</p>
+      </div>
     </div>
-    <div v-if="status === 'ready'" class="scout-visual-layout">
+    <FormCard v-else-if="!snapshotReady && !snapshotExpired" class="scout-visual-placeholder">
+      <div class="scout-visual-empty">
+        <div class="scout-visual-empty-icon"><MousePointer2 :size="23" aria-hidden="true" /></div>
+        <div>
+          <h2>{{ design('empty') }}</h2>
+          <p>{{ design('emptyHint') }}</p>
+        </div>
+      </div>
+    </FormCard>
+    <FormCard v-if="snapshotExpired && fields.length" class="scout-visual-placeholder">
+      <h2 class="scout-visual-panel-title">{{ design('savedFields') }}</h2>
+      <table class="scout-visual-expired-fields">
+        <thead><tr><th>{{ t('scout.fieldName') }}</th><th>{{ t('scout.fieldSelector') }}</th><th>{{ design('state') }}</th></tr></thead>
+        <tbody>
+          <tr v-for="field in fields" :key="field.index">
+            <td>{{ field.name }}</td>
+            <td><code>{{ field.selector }}</code></td>
+            <td><span class="scout-visual-badge" data-tone="warning">{{ t('scout.product.fieldNeedsCheck') }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </FormCard>
+    <div v-if="snapshotReady" class="scout-visual-layout">
       <template v-if="inspectorPrototype">
         <nav class="scout-prototype-tabs" role="tablist" :aria-label="t('scout.inspector.views')">
           <button
@@ -545,12 +667,10 @@ function removeField(index) {
             @keydown="tabKey($event, index)"
             @click="selectTab(tab)"
           >
-            {{ t(`scout.inspector.tabs.${tab}`)
-            }}<span v-if="tab === 'field'"> · {{ fields.length }}</span
-            ><small>{{ t(`scout.product.tabHints.${tab}`) }}</small>
+            {{ tab === 'field' ? design('fields') : t(`scout.inspector.tabs.${tab}`) }}
           </button>
         </nav>
-        <div class="scout-prototype-tools">
+        <div class="scout-prototype-tools" :class="{ 'scout-prototype-tools--dock': showTree && showInspector }">
           <button
             type="button"
             class="btn btn-outline-secondary btn-sm"
@@ -565,7 +685,7 @@ function removeField(index) {
             @click="showInspector = !showInspector"
           >
             {{ t('scout.inspector.inspector') }}</button
-          ><span class="small scout-muted">{{ t('scout.inspector.draftHint') }}</span>
+          >
         </div>
         <div v-if="tree.error.value" class="alert alert-warning scout-prototype-error" role="alert">
           {{ t(`scout.inspector.${tree.error.value}`)
@@ -579,7 +699,7 @@ function removeField(index) {
           :role="compact ? 'tabpanel' : 'region'"
           aria-labelledby="scout-tab-tree"
           :tree="tree"
-          :selected="selectedNode"
+          :selected="displayedNodeId"
           @select="chooseNode"
         />
         <!-- Separator supports pointer dragging and keyboard arrows; the accessibility rule does not recognise this ARIA widget. -->
@@ -605,31 +725,36 @@ function removeField(index) {
         class="scout-visual-document"
         :aria-label="t('scout.visual.snapshotTitle')"
       >
-        <h2 class="h6">{{ t('scout.visual.snapshotTitle') }}</h2>
-        <p class="scout-muted small">{{ t('scout.visual.frameHint') }}</p>
+        <header class="scout-visual-panel-header">
+          <h2 class="scout-visual-panel-title">{{ t('scout.visual.snapshotTitle') }}</h2>
+          <span class="scout-visual-badge" data-tone="neutral">{{ design('readOnly') }}</span>
+        </header>
         <ScoutSnapshotFrame
           :html="snapshot.html"
           :node-ids="inspectorPrototype ? summary.nodeIds : highlighted"
           :prototype="inspectorPrototype"
-          :selection-id="selectedNode"
+          :selection-id="displayedNodeId"
           :card-ids="cardNodeIds"
           :hover-id="hoveredNode"
           @select="select"
           @candidate="hoveredNode = tree.invalid.value ? '' : $event"
         />
-        <div
-          v-if="inspectorPrototype"
-          class="scout-prototype-legend"
-          :aria-label="t('scout.inspector.legend')"
-        >
-          <span
-            v-for="role in ['hover', 'selected', 'card', 'matches']"
-            :key="role"
-            :data-role="role"
-            >{{ t(`scout.inspector.${role}`) }}</span
-          >
+        <div v-if="inspectorPrototype" class="scout-visual-snapshot-meta">
+          <span class="scout-visual-badge" :data-tone="displayedNodeId ? 'accent' : 'neutral'">
+            {{ displayedNodeId ? design('selected') : design('pick') }}
+          </span>
+          <code v-if="displayedNodeId && displayedLabel">{{ displayedLabel }}</code>
+          <span v-else>{{ design('snapshotHint') }}</span>
+          <details v-if="cardNodeIds.length || summary.nodeIds.length" class="scout-visual-legend-details">
+            <summary>{{ t('scout.inspector.legend') }}</summary>
+            <div class="scout-prototype-legend" :aria-label="t('scout.inspector.legend')">
+              <span v-for="role in ['hover', 'selected', 'card', 'matches']" :key="role" :data-role="role">
+                {{ t(`scout.inspector.${role}`) }}
+              </span>
+            </div>
+          </details>
         </div>
-        <p class="scout-muted small mt-2">{{ t('scout.visual.keyboard') }}</p>
+        <p class="visually-hidden">{{ t('scout.visual.keyboard') }}</p>
       </section>
       <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -->
       <div
@@ -652,44 +777,27 @@ function removeField(index) {
         class="scout-visual-rules"
         :aria-label="t('scout.flow.rules')"
       >
+        <header class="scout-visual-panel-header">
+          <h2 class="scout-visual-panel-title">{{ showDraft && target === 'field' && draft.name.trim() ? draft.name : design('resultFields') }}</h2>
+          <ImageIcon :size="16" aria-hidden="true" />
+        </header>
         <div v-if="inspectorPrototype" class="scout-prototype-selection" aria-live="polite">
-          <h2 class="h6">
-            {{
-              editing >= 0
-                ? t('scout.product.editing', { name: draft.name })
-                : t('scout.inspector.inspector')
-            }}
-          </h2>
-          <p v-if="!selectedNode" class="scout-muted small">
-            {{ t('scout.inspector.selectHint') }}
+          <div v-if="!showDraft && !acceptedField" class="scout-visual-notice" data-tone="info">
+            <Info :size="17" aria-hidden="true" />
+            <div><strong>{{ design('pick') }}</strong><p>{{ design('pickHint') }}</p></div>
+          </div>
+          <div v-if="displayedNodeId || acceptedField" class="scout-visual-node-badges">
+            <span class="scout-visual-badge" data-tone="accent">{{ acceptedField ? design('saved') : design('selected') }}</span>
+            <span v-if="displayedImage" class="scout-visual-badge" data-tone="info">{{ t('scout.visual.image.field') }}</span>
+          </div>
+          <span class="scout-visual-node-label">{{ design('selectedNode') }}</span>
+          <strong v-if="displayedPath" class="scout-prototype-selected-label">{{ displayedPath }}</strong>
+          <p v-else class="small scout-muted mb-0">{{ design('noNode') }}</p>
+          <p v-if="displayedNode?.node.text_preview && !displayedImage" class="small scout-muted mb-0">
+            {{ displayedNode.node.text_preview }}
           </p>
-          <template v-if="tree.detail.value">
-            <strong class="scout-prototype-selected-label">{{
-              nodeLabel(tree.detail.value.node)
-            }}</strong>
-            <p class="small">
-              {{ tree.detail.value.node.text_preview || t('scout.inspector.noText') }}
-            </p>
-            <template
-              v-if="
-                !tree.loading.value &&
-                !tree.invalid.value &&
-                tree.detail.value.node.tag === 'img' &&
-                tree.detail.value.node.node_id === selectedNode &&
-                tree.detail.value.snapshot_public_id === snapshot.public_id &&
-                tree.detail.value.tree_version === snapshot.tree_version
-              "
-            >
-              <p v-if="target === 'field' && !checked" class="small">
-                {{ t('scout.visual.image.pickField') }}
-              </p>
-              <ScoutImageDownload
-                :key="`${snapshot.public_id}/${snapshot.tree_version}/${selectedNode}`"
-                :endpoint="scoutEndpoints.visualSnapshotImage(snapshot.public_id)"
-                :params="{ tree_version: snapshot.tree_version, node_id: selectedNode }"
-                :filename-stem="`scout-${selectedNode}`"
-              />
-            </template>
+          <details v-if="tree.detail.value && selectedNode" class="scout-visual-navigator">
+            <summary>{{ design('navigation') }}</summary>
             <nav class="scout-visual-ancestors" :aria-label="t('scout.inspector.parents')">
               <button
                 v-for="node in tree.detail.value.ancestors"
@@ -717,11 +825,13 @@ function removeField(index) {
                 {{ t(`scout.inspector.${direction}`) }}
               </button>
             </div>
-          </template>
+          </details>
         </div>
         <fieldset :disabled="disabled">
-          <legend class="h6">{{ t('scout.workspace.recordUnit') }}</legend>
-          <div class="scout-radio-group mb-3">
+          <legend class="visually-hidden">{{ t('scout.workspace.recordUnit') }}</legend>
+          <details class="scout-visual-record-settings" :open="!inspectorPrototype || form.recordMode === 'cards'">
+            <summary>{{ design('recordSettings') }}</summary>
+            <div class="scout-radio-group">
             <label for="scout-visual-page"
               ><input
                 id="scout-visual-page"
@@ -740,8 +850,8 @@ function removeField(index) {
                 name="scout-visual-unit"
               />{{ t('scout.visual.cards') }}</label
             >
-          </div>
-          <div class="scout-visual-targets">
+            </div>
+            <div v-if="form.recordMode === 'cards'" class="scout-visual-targets">
             <button
               v-if="form.recordMode === 'cards'"
               type="button"
@@ -760,10 +870,14 @@ function removeField(index) {
             >
               {{ t('scout.visual.field') }}
             </button>
-          </div>
-          <p class="scout-muted small mt-2">
-            {{ t(target === 'record' ? 'scout.visual.pickCard' : 'scout.visual.pickField') }}
-          </p>
+            </div>
+            <button v-if="inspectorPrototype && !showDraft && target === 'field'" type="button" class="btn btn-outline-secondary btn-sm" @click="manualRule = true">
+              {{ design('selector') }}
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @click="emit('manual')">
+              {{ t('scout.workspace.useManual') }}
+            </button>
+          </details>
           <div v-if="ancestors.length && !inspectorPrototype" class="scout-visual-ancestors">
             <span class="small">{{ t('scout.visual.ancestors') }}</span>
             <button
@@ -788,40 +902,61 @@ function removeField(index) {
                 @input="manualRule = true"
             /></label>
           </template>
-          <template v-else>
-            <label class="scout-input-label" for="scout-visual-name"
-              >{{ t('scout.fieldName')
-              }}<input id="scout-visual-name" v-model="draft.name" class="form-control"
-            /></label>
-            <label class="scout-input-label mt-2" for="scout-visual-css"
-              >{{ t('scout.visual.fieldCss')
-              }}<input
-                id="scout-visual-css"
-                v-model="draft.selector"
-                class="form-control"
-                @input="manualRule = true"
-            /></label>
-            <label
-              v-if="form.recordMode === 'cards'"
-              class="scout-input-label mt-2"
-              for="scout-visual-scope"
-              >{{ t('scout.fieldScope')
-              }}<select id="scout-visual-scope" v-model="draft.scope" class="form-select">
+          <template v-else-if="showDraft || acceptedField">
+            <div class="scout-visual-field-form">
+              <label class="scout-input-label" for="scout-visual-name">
+                {{ t('scout.fieldName') }}
+                <input v-if="acceptedField" id="scout-visual-name" :value="acceptedField.name" class="form-control" readonly />
+                <input v-else id="scout-visual-name" v-model="draft.name" class="form-control" />
+              </label>
+              <label class="scout-input-label" for="scout-visual-scope">
+                {{ design('scope') }}
+                <select
+                  v-if="form.recordMode === 'cards' && !acceptedField"
+                  id="scout-visual-scope"
+                  v-model="draft.scope"
+                  class="form-select"
+                >
                 <option value="record">{{ t('scout.scopeRecord') }}</option>
                 <option value="page">{{ t('scout.scopePage') }}</option>
-              </select></label
-            >
-            <div class="my-3">
-              <ToggleSwitch
-                id="scout-visual-many"
-                v-model="draft.many"
-                :label="t('scout.fieldMany')"
-              />
+                </select>
+                <input v-else id="scout-visual-scope" class="form-control" :value="t(acceptedField?.scope === 'record' ? 'scout.scopeRecord' : 'scout.scopePage')" readonly />
+              </label>
+              <details class="scout-visual-selector" open>
+                <summary>{{ design('selector') }}<ChevronDown :size="15" aria-hidden="true" /></summary>
+                <label class="visually-hidden" for="scout-visual-css">{{ t('scout.visual.fieldCss') }}</label>
+                <input v-if="acceptedField" id="scout-visual-css" :value="acceptedField.selector" class="form-control" readonly />
+                <input
+                  v-else
+                  id="scout-visual-css"
+                  v-model="draft.selector"
+                  class="form-control"
+                  :placeholder="displayedLabel"
+                  :aria-invalid="error ? 'true' : undefined"
+                  :aria-describedby="error ? 'scout-visual-css-error' : undefined"
+                  @input="manualRule = true"
+                />
+              </details>
+              <details v-if="!acceptedField" class="scout-visual-field-options">
+                <summary>{{ t('scout.fieldMany') }}</summary>
+                <ToggleSwitch id="scout-visual-many" v-model="draft.many" :label="t('scout.fieldMany')" />
+              </details>
+              <p v-if="!checked && !acceptedField && !error" class="small scout-muted mb-0">
+                {{ design('selectorHint') }}
+              </p>
             </div>
-            <p v-if="duplicateName" class="scout-warning small" role="alert">
+            <p v-if="!acceptedField && duplicateName" class="scout-warning small" role="alert">
               {{ t('scout.visual.duplicate') }}
             </p>
           </template>
+          <div v-if="error" id="scout-visual-css-error" class="scout-visual-notice" data-tone="danger" role="alert">
+            <TriangleAlert :size="18" aria-hidden="true" />
+            <div>
+              <strong>{{ design('ruleNotApplied') }}</strong>
+              <p>{{ t(`scout.visual.${error.key}`) }}</p>
+              <p v-if="error.detail">{{ error.detail }}</p>
+            </div>
+          </div>
           <button
             v-if="!inspectorPrototype"
             type="button"
@@ -836,17 +971,16 @@ function removeField(index) {
           >
             {{ checking ? t('scout.visual.checking') : t('scout.visual.check') }}
           </button>
-          <div v-if="checked" class="scout-visual-check" aria-live="polite">
-            <p class="fw-semibold">{{ t('scout.visual.rowCount', { count: result.row_count }) }}</p>
-            <p v-if="target === 'field'">
-              {{ t('scout.visual.matches', { count: summary.matches }) }}
-            </p>
-            <p v-if="result.field?.value_source === 'image'" class="small">
-              {{ t('scout.visual.image.fieldHint') }}
-            </p>
-            <p v-if="!acceptable" class="scout-warning" role="status">
-              {{ t('scout.visual.notFound') }}
-            </p>
+          <div v-if="checked" class="scout-visual-check" :data-acceptable="acceptable" aria-live="polite">
+            <div class="scout-visual-notice" :data-tone="acceptable ? 'success' : 'warning'">
+              <Check v-if="acceptable" :size="18" aria-hidden="true" />
+              <TriangleAlert v-else :size="18" aria-hidden="true" />
+              <div>
+                <strong>{{ target === 'field' ? design('matches', summary.matches) : t('scout.visual.rowCount', { count: result.row_count }) }}</strong>
+                <p v-if="result.field?.value_source === 'image'">{{ t('scout.visual.image.fieldHint') }}</p>
+                <p v-if="!acceptable">{{ t('scout.visual.notFound') }}</p>
+              </div>
+            </div>
             <p v-if="target === 'field' && summary.missing" class="scout-warning small">
               {{ t('scout.visual.missing', { count: summary.missing }) }}
             </p>
@@ -856,7 +990,7 @@ function removeField(index) {
             >
               {{ t('scout.visual.multiple') }}
             </p>
-            <ol v-if="target === 'field'" class="scout-visual-samples">
+            <ol v-if="target === 'field' && result.field?.value_source !== 'image'" class="scout-visual-samples">
               <li v-for="(row, index) in result.rows" :key="index">
                 {{
                   row.match_count
@@ -870,7 +1004,7 @@ function removeField(index) {
                 }}
               </li>
             </ol>
-            <p v-if="inspectorPrototype" class="scout-muted small">
+            <p v-if="inspectorPrototype && result.field?.value_source !== 'image'" class="scout-muted small">
               {{
                 t('scout.inspector.sampleHint', {
                   shown: result.rows.length,
@@ -878,6 +1012,14 @@ function removeField(index) {
                 })
               }}
             </p>
+            <details v-if="result.field?.value_source === 'image'" class="scout-visual-field-options">
+              <summary>{{ design('examples') }}</summary>
+              <ol class="scout-visual-samples">
+                <li v-for="(row, index) in result.rows" :key="index">
+                  {{ displayValue(row.value, t('scout.visual.notFound')) }}
+                </li>
+              </ol>
+            </details>
             <button
               v-if="!inspectorPrototype"
               type="button"
@@ -888,17 +1030,23 @@ function removeField(index) {
               {{ t(target === 'record' ? 'scout.visual.acceptCard' : 'scout.visual.acceptField') }}
             </button>
           </div>
-          <h3 class="h6 mt-4">{{ t('scout.visual.acceptedFields') }}</h3>
-          <p v-if="!fields.length" class="scout-muted small">{{ t('scout.visual.noFields') }}</p>
-          <ul class="scout-visual-fields">
+          <h3 v-if="fields.length && !acceptedField" class="scout-visual-panel-title scout-visual-fields-title">{{ t('scout.visual.acceptedFields') }}</h3>
+          <p v-if="!fields.length && !showDraft" class="scout-muted small mb-0">{{ design('fieldHint') }}</p>
+          <ul v-if="fields.length" class="scout-visual-fields">
             <li v-for="field in fields" :key="field.index">
-              <strong>
+              <strong :class="{ 'visually-hidden': field.index === acceptedField?.index }">
                 {{ field.name }}<template v-if="field.value_source === 'image'"> · {{ t('scout.visual.image.field') }}</template>
               </strong>
-              <code>{{ field.selector }}</code>
-              <small
-                v-if="inspectorPrototype"
+              <code :class="{ 'visually-hidden': field.index === acceptedField?.index }">{{ field.selector }}</code>
+              <div v-if="field.index === acceptedField?.index" class="scout-visual-saved-meta">
+                <span class="scout-visual-badge" data-tone="success">{{ design('fieldSaved') }}</span>
+                <button type="button" class="btn btn-link btn-sm" @click="editField(field.index)">{{ t('scout.visual.edit') }}</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @click="removeField(field.index)">{{ t('scout.visual.remove') }}</button>
+              </div>
+              <p v-if="field.index === acceptedField?.index && field.value_source === 'image'" class="small scout-muted mb-0">{{ t('scout.visual.image.fieldHint') }}</p>
+              <small v-if="inspectorPrototype"
                 class="scout-field-verification"
+                :class="{ 'visually-hidden': field.index === acceptedField?.index }"
                 :data-verified="fieldVerified(field)"
                 >{{
                   t(
@@ -908,7 +1056,7 @@ function removeField(index) {
                   )
                 }}</small
               >
-              <div>
+              <div v-if="field.index !== acceptedField?.index">
                 <button
                   type="button"
                   class="btn btn-outline-secondary btn-sm"
@@ -925,20 +1073,18 @@ function removeField(index) {
               </div>
             </li>
           </ul>
+          <ScoutImageDownload
+            v-if="canDownloadImage"
+            :key="`${snapshot.public_id}/${snapshot.tree_version}/${displayedNodeId}`"
+            :endpoint="scoutEndpoints.visualSnapshotImage(snapshot.public_id)"
+            :params="{ tree_version: snapshot.tree_version, node_id: displayedNodeId }"
+            :filename-stem="`scout-${displayedNodeId}`"
+          />
         </fieldset>
       </section>
     </div>
-    <div v-if="inspectorPrototype" class="scout-inspector-actions" aria-live="polite">
-      <div>
-        <strong>{{
-          t(
-            checked
-              ? 'scout.product.checked'
-              : selectedNode
-                ? 'scout.product.selected'
-                : 'scout.product.select',
-          )
-        }}</strong>
+    <div class="scout-inspector-actions" aria-live="polite">
+      <div class="scout-visual-action-hint" :class="{ 'visually-hidden': !canReviewNext }">
         <p id="scout-preview-requirements" class="small scout-muted mb-0">{{ previewHint }}</p>
         <button
           v-if="canReviewNext"
@@ -951,49 +1097,34 @@ function removeField(index) {
       </div>
       <div class="scout-inspector-action-buttons">
         <button
-          type="button"
-          class="btn btn-outline-secondary"
-          :disabled="disabled || !canCancel"
-          @click="cancelSelection"
-        >
-          {{ t('scout.inspector.cancel') }}
-        </button>
-        <button
-          type="button"
-          class="btn btn-outline-secondary"
-          :disabled="disabled || !valid"
-          aria-describedby="scout-preview-requirements"
-          @click="emit('preview')"
-        >
-          {{ t('scout.workspace.preparePreview') }} · {{ fields.length }}
-        </button>
-        <button
+          v-if="status !== 'loading' && (inspectorPrototype || !snapshotReady || valid)"
           type="button"
           class="btn btn-primary"
-          :disabled="primaryDisabled"
-          @click="primaryAction"
+          :disabled="inspectorPrototype || !snapshotReady ? primaryDisabled : disabled"
+          aria-describedby="scout-preview-requirements"
+          @click="inspectorPrototype || !snapshotReady ? primaryAction() : emit('preview')"
         >
-          {{ primaryLabel }}
+          {{ inspectorPrototype || !snapshotReady ? primaryLabel : t('scout.workspace.preparePreview') }}
+        </button>
+        <button v-if="status === 'loading'" type="button" class="btn btn-outline-secondary" @click="cancelLoading">
+          {{ design('cancelLoading') }}
+        </button>
+        <button v-else-if="snapshotExpired || status === 'failed' || !inspectorPrototype" type="button" class="btn btn-outline-secondary" :disabled="disabled" @click="emit('manual')">
+          {{ t('scout.workspace.useManual') }}
+        </button>
+        <button v-else-if="!snapshotReady" type="button" class="btn btn-outline-secondary" :disabled="disabled" @click="emit('back')">
+          {{ design('backToMode') }}
+        </button>
+        <button v-else-if="canCancel" type="button" class="btn btn-outline-secondary" :disabled="disabled" @click="cancelSelection">
+          {{ t('scout.inspector.cancel') }}
+        </button>
+        <button v-else-if="valid" type="button" class="btn btn-outline-secondary" :disabled="disabled" @click="addAnotherField">
+          {{ design(compact ? 'backToSnapshot' : 'moreField') }}
+        </button>
+        <button v-else type="button" class="btn btn-outline-secondary" :disabled="disabled" @click="urlInput?.focus()">
+          {{ design('backToSource') }}
         </button>
       </div>
-    </div>
-    <div class="scout-actions mt-3">
-      <button
-        type="button"
-        class="btn btn-outline-secondary"
-        :disabled="disabled"
-        @click="emit('manual')"
-      >
-        {{ t('scout.workspace.useManual') }}</button
-      ><button
-        type="button"
-        class="btn btn-primary"
-        v-if="!inspectorPrototype"
-        :disabled="disabled || !valid"
-        @click="emit('preview')"
-      >
-        {{ t('scout.workspace.preparePreview') }}
-      </button>
     </div>
   </div>
 </template>

@@ -8,8 +8,7 @@ module.exports = async (browser, output) => {
   try {
     await page.goto(pathToFileURL(path.join(output, 'fixture.html')).href + '#/product')
     const ui = page.locator('.scout-workflow')
-    await ui.locator('.scout-mode').nth(1).click()
-    await ui.getByRole('button', { name: 'Далее: источник и правила' }).click()
+    await ui.getByRole('button', { name: 'Выбрать на странице', exact: true }).click()
     await ui.locator('#scout-visual-url').fill('https://books.toscrape.com/')
     await ui.getByRole('button', { name: 'Загрузить страницу', exact: true }).click()
 
@@ -87,7 +86,7 @@ module.exports = async (browser, output) => {
     })
     await button.click()
     await busy.waitFor()
-    await ui.locator('.scout-visual-source button').click()
+    await ui.getByRole('button', { name: 'Обновить снимок', exact: true }).click()
     await first.waitFor()
     await page.evaluate(() => window.__scoutTest.visual.release())
     await first.press('ArrowRight')
@@ -118,7 +117,7 @@ async function checkImageCollection(page, ui, frame) {
     page.waitForEvent('requestfailed', (request) =>
       request.url() === 'https://books.toscrape.com/blocked-style.png',
     ),
-    ui.locator('.scout-visual-source button').click(),
+    ui.getByRole('button', { name: 'Обновить снимок', exact: true }).click(),
   ])
   assert.match(blockedStyle.failure()?.errorText || '', /^(csp|net::ERR_BLOCKED_BY_CSP)$/)
   const photo = frame.getByRole('img', { name: 'Cover', exact: true })
@@ -191,7 +190,7 @@ async function checkImageCollection(page, ui, frame) {
     .getByText('Во время сбора Scout сохранит выбранные изображения.', { exact: false })
     .waitFor()
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
-  await ui.getByRole('button', { name: /Получить предпросмотр/ }).click()
+  await ui.getByRole('button', { name: /^К предпросмотру/ }).click()
   await ui.getByRole('heading', { name: 'Предпросмотр готов' }).waitFor()
   await ui.getByText('Будет скачано во время сбора', { exact: true }).first().waitFor()
   const field = await page.evaluate(() => window.__scoutTest.job.revision.fields[0])
@@ -218,7 +217,7 @@ async function checkImageCollection(page, ui, frame) {
   await page.evaluate(() => {
     window.__scoutTest.setStatus('completed')
   })
-  await ui.getByRole('heading', { name: 'Завершён', exact: true }).waitFor()
+  await ui.getByRole('heading', { name: 'Сбор завершён', exact: true }).waitFor()
   await ui.getByText('Файл сохранён', { exact: true }).first().waitFor()
   await ui.getByText('Не удалось скачать файл', { exact: true }).first().waitFor()
   await ui.getByText('Пропущено из-за лимита сбора', { exact: true }).first().waitFor()
