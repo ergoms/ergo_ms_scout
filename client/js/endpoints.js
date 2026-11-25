@@ -10,6 +10,7 @@ export const scoutEndpoints = {
   retentionCleanup: (id) => `scout/retention/cleanups/${id}/`,
   retentionCleanupItems: (id) => `scout/retention/cleanups/${id}/items/`,
   jobs: 'scout/jobs/',
+  jobRuns: (id) => `scout/jobs/${id}/runs/`,
   schedule: (publicId) => `scout/jobs/${publicId}/schedule/`,
   scheduleOccurrences: (publicId) => `scout/jobs/${publicId}/schedule/occurrences/`,
   visualSnapshots: 'scout/visual-snapshots/',

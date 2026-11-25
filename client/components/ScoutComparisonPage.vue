@@ -5,6 +5,7 @@ import FormCard from '@/components/FormCard.vue'
 import FormField from '@/components/FormField.vue'
 import { useAppI18n } from '@/i18n/useAppI18n.js'
 import ScoutComparisonSide from './ScoutComparisonSide.vue'
+import ScoutRunHistoryPicker from './ScoutRunHistoryPicker.vue'
 import { useScoutComparison } from '../js/useScoutComparison.js'
 import { COMPARISON_STATUSES } from '../js/comparisonState.js'
 import { retentionCount } from '../js/retentionState.js'
@@ -36,6 +37,7 @@ const {
   loadPair,
   compare,
   swap,
+  selectHistory,
 } = useScoutComparison(selection, (query) =>
   router.replace({ query: { ...route.query, ...query } }),
 )
@@ -77,6 +79,11 @@ function resultRoute(side, storage = false) {
     },
   }
 }
+function historyJobChanged(jobId) {
+  router.replace({
+    query: { ...route.query, job: jobId || undefined, base: undefined, target: undefined },
+  })
+}
 </script>
 <template>
   <main class="scout-workflow scout-comparison">
@@ -90,6 +97,15 @@ function resultRoute(side, storage = false) {
         t('scout.comparison.back')
       }}</RouterLink>
     </header>
+    <ScoutRunHistoryPicker
+      :job-public-id="
+        typeof route.query.job === 'string' ? route.query.job : pair?.target.job_public_id
+      "
+      :target-run-public-id="ids.target || undefined"
+      :disabled="loading || comparing"
+      @select="selectHistory"
+      @job-change="historyJobChanged"
+    />
     <FormCard class="scout-comparison-card"
       ><div class="scout-comparison-content">
         <p>{{ t('scout.comparison.manualHint') }}</p>

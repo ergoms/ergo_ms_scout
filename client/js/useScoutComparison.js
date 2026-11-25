@@ -174,6 +174,32 @@ export function useScoutComparison(routeSelection, persist) {
     draft.base = draft.target
     draft.target = previous
   }
+  async function selectHistory(selection) {
+    if (
+      disposed ||
+      loading.value ||
+      comparing.value ||
+      !validRunId(selection.base) ||
+      !validRunId(selection.target) ||
+      selection.base === selection.target
+    )
+      return
+    draft.base = resultLink(selection.base, origin)
+    draft.target = resultLink(selection.target, origin)
+    const names = (Array.isArray(selection.fields) ? selection.fields : []).filter(
+      (name) => typeof name === 'string',
+    )
+    if (!names.includes(draft.field)) draft.field = names[0] || ''
+    await loadPair()
+    if (
+      !disposed &&
+      pair.value &&
+      ids.value.base === selection.base &&
+      ids.value.target === selection.target &&
+      !fields.value.length
+    )
+      fields.value = names
+  }
   watch(
     routeSelection,
     (value) => {
@@ -223,5 +249,6 @@ export function useScoutComparison(routeSelection, persist) {
     loadPair,
     compare,
     swap,
+    selectHistory,
   }
 }

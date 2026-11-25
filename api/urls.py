@@ -1,4 +1,5 @@
 from django.urls import path
+from .history_views import JobRunHistoryView
 
 from .proxy_views import ProxyProfileCheckView, ProxyProfilesView, ProxyProfileView
 from .tree_views import VisualImageView, VisualTreeView, VisualTreeNodeView, VisualTreeSearchView
@@ -53,6 +54,7 @@ urlpatterns = [
     path('plan-suggestions/', PlanSuggestionView.as_view(), name='scout-plan-suggestions'),
     path('jobs/', JobListCreateView.as_view(), name='scout-jobs'),
     path('jobs/<uuid:public_id>/', JobDetailView.as_view(), name='scout-job'),
+    path('jobs/<uuid:public_id>/runs/', JobRunHistoryView.as_view(), name='scout-job-runs'),
     path('jobs/<uuid:public_id>/explore/', JobExploreView.as_view(), name='scout-job-explore'),
     path('jobs/<uuid:public_id>/schedule/', DailyScheduleView.as_view(), name='scout-daily-schedule'),
     path('jobs/<uuid:public_id>/schedule/occurrences/', ScheduleOccurrencesView.as_view(), name='scout-schedule-days'),

@@ -517,7 +517,7 @@ function openSystemSettings() {
             </button>
             <RouterLink
               v-if="run && ['completed', 'completed_with_errors'].includes(run.status)"
-              :to="{ path: '/scout/compare', query: { target: run.public_id } }"
+              :to="{ path: '/scout/compare', query: { job: scheduleJobId, target: run.public_id } }"
               class="btn btn-outline-secondary"
               >{{ t('scout.comparison.open') }}</RouterLink
             >

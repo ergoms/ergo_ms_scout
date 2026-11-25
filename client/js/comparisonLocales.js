@@ -1,11 +1,13 @@
+import runHistoryLocales from './runHistoryLocales.js'
 export default {
   ru: {
+    history: runHistoryLocales.ru,
     title: 'Сравнение двух сборов',
     open: 'Сравнить результаты',
     back: 'Вернуться к Scout',
     lead: 'Сравнение сохранённых значений одного поля по явно заданному ключу объекта.',
     manualHint:
-      'Общего списка запусков пока нет. Откройте нужные результаты и скопируйте ссылки из адресной строки. Здесь используются только сохранённые данные — новый сбор не запускается.',
+      'Также можно указать ссылки на сохранённые результаты вручную. Новый сбор не запускается.',
     baseLink: 'Ссылка на исходный результат',
     targetLink: 'Ссылка на более поздний результат',
     linkHint:
@@ -124,12 +126,13 @@ export default {
     },
   },
   en: {
+    history: runHistoryLocales.en,
     title: 'Compare two collections',
     open: 'Compare results',
     back: 'Back to Scout',
     lead: 'Compare saved values of one field using an explicitly configured object key.',
     manualHint:
-      'A complete run list is not available yet. Open the desired results and copy their address-bar links. This view uses saved data only and does not start a collection.',
+      'You can also enter links to saved results manually. This does not start a collection.',
     baseLink: 'Original result link',
     targetLink: 'Later result link',
     linkHint:
@@ -246,12 +249,13 @@ export default {
     },
   },
   fr: {
+    history: runHistoryLocales.fr,
     title: 'Comparer deux collectes',
     open: 'Comparer les résultats',
     back: 'Retour à Scout',
     lead: 'Comparer les valeurs enregistrées d’un champ selon une clé d’objet explicitement définie.',
     manualHint:
-      'La liste complète des exécutions n’est pas encore disponible. Ouvrez les résultats souhaités et copiez leurs liens. Cette vue utilise les données enregistrées et ne lance pas de collecte.',
+      'Vous pouvez aussi saisir les liens des résultats enregistrés. Aucune nouvelle collecte ne démarre.',
     baseLink: 'Lien du résultat initial',
     targetLink: 'Lien du résultat plus récent',
     linkHint:

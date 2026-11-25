@@ -23,6 +23,28 @@ export function installComparisonFixture(api, fixture) {
     release: null,
   })
   const previous = api.get.bind(api)
+  const history = (state.history = { calls: [], error: 0, defer: false, release: null })
+  const expiredId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+  const pendingId = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+  const historyRow = (id, date, extra = {}) => ({
+    public_id: id,
+    job_public_id: job,
+    created_at: date,
+    started_at: date,
+    finished_at: date,
+    status: 'completed',
+    plan_hash: 'same-plan',
+    revision_number: 1,
+    record_count: 3,
+    results_availability: 'available',
+    completeness: 'complete',
+    stop_reason: '',
+    failed_tasks: 0,
+    comparison_eligible: true,
+    comparison_blocked_reason: null,
+    comparison_fields: ['price', 'zero'],
+    ...extra,
+  })
   const value = (amount) => ({
     raw: amount + ' ₽',
     normalized: amount + ' ₽',
@@ -47,6 +69,51 @@ export function installComparisonFixture(api, fixture) {
     ],
   })
   api.get = async (url, params = {}, ...args) => {
+    if (url === 'scout/jobs/')
+      return ok({
+        jobs: [
+          { public_id: job, title: 'Сравнение: обозначенный каталог' },
+          { public_id: '77777777-7777-4777-8777-777777777777', title: 'Другое задание' },
+        ],
+      })
+    if (/^scout\/jobs\/[^/]+\/runs\/$/.test(url)) {
+      history.calls.push([url, clone(params)])
+      const response = history.error
+        ? fail(history.error, 'unavailable')
+        : ok({
+            job_public_id: job,
+            runs: !url.includes(job)
+              ? []
+              : params.cursor
+                ? [historyRow(baseId, '2026-11-01T10:00:00Z')]
+                : [
+                    historyRow(targetId, '2026-11-02T10:00:00Z'),
+                    historyRow(expiredId, '2026-11-01T09:00:00Z', {
+                      results_availability: 'expired',
+                      comparison_eligible: false,
+                      comparison_blocked_reason: 'data_expired',
+                      record_count: 17,
+                    }),
+                    historyRow(pendingId, null, {
+                      status: 'awaiting_confirmation',
+                      comparison_eligible: false,
+                      comparison_blocked_reason: 'not_ready',
+                      completeness: null,
+                    }),
+                  ],
+            next_cursor: url.includes(job) && !params.cursor ? 'history-next' : null,
+          })
+      if (history.defer) {
+        history.defer = false
+        await new Promise((resolve) => {
+          history.release = () => {
+            history.release = null
+            resolve()
+          }
+        })
+      }
+      return response
+    }
     if (!url.includes(baseId) && !url.includes(targetId) && !url.includes(job))
       return previous(url, params, ...args)
     state.calls.push([url, clone(params)])

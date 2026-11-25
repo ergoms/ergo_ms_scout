@@ -3,7 +3,9 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 
-const root = path.resolve(__dirname, '../../../..')
+const root = process.env.SCOUT_PLATFORM_ROOT
+  ? path.resolve(process.env.SCOUT_PLATFORM_ROOT)
+  : path.resolve(__dirname, '../../../..')
 const output = path.join(root, 'virtual_env/cache/tmp/scout-client-browser')
 process.env.TEMP = path.join(root, 'virtual_env/cache/tmp')
 process.env.TMP = process.env.TEMP
@@ -45,6 +47,7 @@ async function main() {
     await require('./schedule-browser.cjs')(browser, output)
     await require('./retention-browser.cjs')(browser, output)
     await require('./comparison-browser.cjs')(browser, output)
+    await require('./run-history-browser.cjs')(browser, output)
     page = await browser.newPage({ viewport: { width: 1440, height: 1100 } })
     const errors = []
     page.on('pageerror', (error) => errors.push(error.message))

@@ -52,6 +52,29 @@ class RunComparisonTests(TestCase):
         query = {'base_run_public_id': base, 'field': 'price', **params}
         return self.client.get(f'/api/scout/runs/{target}/compare/', query)
 
+    def test_history_selects_collected_runs_with_real_counts_and_comparison(self):
+        base = self._collect()
+        self.site.add_product_and_change_price()
+        target = self._collect()
+        url = f'/api/scout/jobs/{self.job}/runs/'
+        first = self.client.get(url, {'limit': 1})
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first['Cache-Control'], 'private, no-store')
+        second = self.client.get(url, {'limit': 1, 'cursor': first.data['next_cursor']})
+        self.assertEqual(second.status_code, 200, second.data)
+        later, earlier = first.data['runs'][0], second.data['runs'][0]
+        self.assertEqual((later['public_id'], earlier['public_id']), (target, base))
+        self.assertEqual((later['record_count'], earlier['record_count']), (4, 3))
+        self.assertTrue(later['comparison_eligible'] and earlier['comparison_eligible'])
+        self.assertIn('price', later['comparison_fields'])
+        self.assertIsNone(second.data['next_cursor'])
+        comparison = self._compare(earlier['public_id'], later['public_id'])
+        self.assertEqual(comparison.status_code, 200, comparison.data)
+        self.assertEqual(comparison.data['counts']['changed'], 1)
+        self.assertEqual(comparison.data['counts']['added'], 1)
+        # A history read is metadata only: no new run, task or collection.
+        self.assertEqual(len(self.client.get(url).data['runs']), 2)
+
     def test_catalog_full_and_partial_comparison_with_evidence(self):
         base = self._collect()
         self.site.add_product_and_change_price()
