@@ -7,8 +7,8 @@ module.exports = async function checkVisual(browser, output) {
   try {
     await page.goto(pathToFileURL(path.join(output, 'fixture.html')).href)
     const ui = page.locator('.scout-workflow')
-    await ui.locator('.scout-mode').nth(1).click()
-    await ui.getByRole('button', { name: 'Далее: источник и правила' }).click()
+    const selectVisual = ui.getByRole('button', { name: 'Выбрать на странице', exact: true })
+    await selectVisual.click()
     await ui.locator('#scout-visual-url').fill('https://books.toscrape.com/')
     const load = ui.getByRole('button', { name: 'Загрузить страницу', exact: true })
     await load.click()
@@ -26,13 +26,13 @@ module.exports = async function checkVisual(browser, output) {
     await ui.getByRole('button', { name: 'Принять карточку', exact: true }).click()
     await ui.locator('#scout-visual-name').fill('price')
     await frame.locator('p').first().click()
-    await ui.getByText('Совпадений в примерах: 20', { exact: true }).waitFor()
+    await ui.getByText('Совпадений: 20', { exact: true }).waitFor()
     assert.equal(await ui.locator('#scout-visual-css').inputValue(), '.price_color')
     await ui.locator('.scout-snapshot-highlights rect').nth(19).waitFor()
 
     await ui.locator('#scout-visual-css').fill('.absent')
     await ui.getByRole('button', { name: 'Проверить CSS', exact: true }).click()
-    await ui.getByText('Совпадений в примерах: 0', { exact: true }).waitFor()
+    await ui.getByRole('status').filter({ hasText: /^Нет совпадений$/ }).waitFor()
     assert.equal(
       await ui.getByRole('button', { name: 'Принять поле', exact: true }).isDisabled(),
       true,
@@ -49,7 +49,7 @@ module.exports = async function checkVisual(browser, output) {
     await page.waitForFunction(() => !!window.__scoutTest.visual.release)
     await ui.locator('#scout-visual-css').fill('.price_color')
     await ui.getByRole('button', { name: 'Проверить CSS', exact: true }).click()
-    await ui.getByText('Совпадений в примерах: 20', { exact: true }).waitFor()
+    await ui.getByText('Совпадений: 20', { exact: true }).waitFor()
     await page.evaluate(() => window.__scoutTest.visual.release())
     assert.equal(await ui.locator('#scout-visual-css').inputValue(), '.price_color')
     await ui.getByRole('button', { name: 'Принять поле', exact: true }).click()
@@ -62,7 +62,7 @@ module.exports = async function checkVisual(browser, output) {
       await ui.getByRole('button', { name: 'Тема оформления', exact: true }).click()
       // Keep viewport checks independent of the dropdown's hover-close timer.
       await page.getByRole('link', { name: theme, exact: true }).press('Enter')
-      for (const width of [1440, 768, 360, 320]) {
+      for (const width of [1440, 768, 390, 360, 320]) {
         await page.setViewportSize({ width, height: 1100 })
         assert.ok(
           await ui.evaluate((element) => element.scrollWidth <= element.clientWidth + 2),
@@ -79,8 +79,8 @@ module.exports = async function checkVisual(browser, output) {
     await ui.getByRole('button', { name: 'Проверить CSS', exact: true }).click()
     await ui.getByRole('button', { name: 'Принять карточку', exact: true }).click()
     assert.equal(
-      await ui.getByRole('button', { name: 'Получить предпросмотр', exact: true }).isDisabled(),
-      true,
+      await ui.getByRole('button', { name: 'Получить предпросмотр', exact: true }).count(),
+      0,
     )
     await ui.getByRole('button', { name: 'Изменить', exact: true }).click()
     await ui.getByRole('button', { name: 'Проверить CSS', exact: true }).click()
@@ -115,8 +115,7 @@ module.exports = async function checkVisual(browser, output) {
 
     // A fresh visual plan also reaches common preview directly.
     await page.goto(pathToFileURL(path.join(output, 'fixture.html')).href)
-    await ui.locator('.scout-mode').nth(1).click()
-    await ui.getByRole('button', { name: 'Далее: источник и правила' }).click()
+    await selectVisual.click()
     await ui.locator('#scout-visual-url').fill('https://books.toscrape.com/')
     await load.click()
     await frame.locator('p').first().click()
@@ -127,8 +126,7 @@ module.exports = async function checkVisual(browser, output) {
 
     // URL and mode changes invalidate a pending load, and loading failures can be retried.
     await page.goto(pathToFileURL(path.join(output, 'fixture.html')).href)
-    await ui.locator('.scout-mode').nth(1).click()
-    await ui.getByRole('button', { name: 'Далее: источник и правила' }).click()
+    await selectVisual.click()
     await ui.locator('#scout-visual-url').fill('https://books.toscrape.com/')
     await page.evaluate(() => {
       window.__scoutTest.visual.defer = 'get'
@@ -149,7 +147,9 @@ module.exports = async function checkVisual(browser, output) {
     })
     await load.click()
     await page.waitForFunction(() => !!window.__scoutTest.visual.release)
-    await ui.getByRole('button', { name: 'Перейти к ручным правилам', exact: true }).click()
+    await ui.getByRole('button', { name: 'Отменить загрузку', exact: true }).click()
+    await ui.locator('.step-rail').getByRole('button', { name: /^Способ/ }).click()
+    await ui.getByRole('button', { name: 'Настроить вручную', exact: true }).click()
     await page.evaluate(() => window.__scoutTest.visual.release())
     assert.equal(
       await ui.locator('#scout-url').inputValue(),

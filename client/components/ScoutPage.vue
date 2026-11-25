@@ -1,29 +1,34 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { confirmAction } from '@/js/utils/confirm.js'
-import { ArrowLeft, ArrowRight, Download, Settings2 } from '@lucide/vue'
-import FormCard from '@/components/FormCard.vue'
-import SelectBox from '@/components/SelectBox.vue'
-import SpinnerLoading from '@/components/SpinnerLoading.vue'
-import ScoutStepRail from './ScoutStepRail.vue'
-import { useThemeMode } from '@/composables/useThemeMode.js'
-import { useAppI18n } from '@/i18n/useAppI18n.js'
-import { applyThemeModePreference } from '@/js/theme-manager.js'
-import { useScoutWorkflow } from '../js/useScoutWorkflow.js'
-import { WORKFLOW_STEPS } from '../js/workflowState.js'
-import ScoutModePicker from './ScoutModePicker.vue'
-import ScoutPlanSummary from './ScoutPlanSummary.vue'
-import ScoutRecordsTable from './ScoutRecordsTable.vue'
-import ScoutRuleEditor from './ScoutRuleEditor.vue'
-import ScoutPlanOptions from './ScoutPlanOptions.vue'
-import ScoutAiEditor from './ScoutAiEditor.vue'
-import ScoutVisualEditor from './ScoutVisualEditor.vue'
-import ScoutSchedulePanel from './ScoutSchedulePanel.vue'
-import ScoutCrawlSummary from './ScoutCrawlSummary.vue'
+import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
+import { confirmAction } from "@/js/utils/confirm.js";
+import { ArrowLeft, ArrowRight, Download, Info, Settings2 } from "@lucide/vue";
+import SelectBox from "@/components/SelectBox.vue";
+import SpinnerLoading from "@/components/SpinnerLoading.vue";
+import ScoutStepRail from "./ScoutStepRail.vue";
+import ScoutWorkspaceHeader from "./ScoutWorkspaceHeader.vue";
+import { useThemeMode } from "@/composables/useThemeMode.js";
+import { useAppI18n } from "@/i18n/useAppI18n.js";
+import { applyThemeModePreference } from "@/js/theme-manager.js";
+import { useScoutWorkflow } from "../js/useScoutWorkflow.js";
+import { WORKFLOW_STEPS } from "../js/workflowState.js";
+import ScoutModePicker from "./ScoutModePicker.vue";
+import ScoutPlanSummary from "./ScoutPlanSummary.vue";
+import ScoutRecordsTable from "./ScoutRecordsTable.vue";
+import ScoutRuleEditor from "./ScoutRuleEditor.vue";
+import ScoutPlanOptions from "./ScoutPlanOptions.vue";
+import ScoutAiEditor from "./ScoutAiEditor.vue";
+import ScoutVisualEditor from "./ScoutVisualEditor.vue";
+import ScoutSchedulePanel from "./ScoutSchedulePanel.vue";
+import ScoutCrawlSummary from "./ScoutCrawlSummary.vue";
+import ScoutRunMetrics from "./ScoutRunMetrics.vue";
+import "../styles/scout-results.scss";
 
-defineProps({ inspectorPrototype: Boolean, inspectorEnabled: { type: Boolean, default: true } })
-const { t } = useAppI18n()
+defineProps({
+  inspectorPrototype: Boolean,
+  inspectorEnabled: { type: Boolean, default: true },
+});
+const { t } = useAppI18n();
 const {
   form,
   scheduleJobId,
@@ -66,134 +71,296 @@ const {
   resume,
   addField,
   removeField,
-} = useScoutWorkflow()
+} = useScoutWorkflow();
 const router = useRouter(),
   schedulePanel = ref(null),
-  storageConfirm = ref(false)
-const storageBlocked = computed(
+  navigationConfirm = ref(false),
+  visualPresentation = ref(null),
+  aiProposal = ref(false);
+const navigationBlocked = computed(
   () =>
     loading.value ||
     busy.value ||
-    storageConfirm.value ||
+    navigationConfirm.value ||
     schedulePanel.value?.writing ||
     schedulePanel.value?.confirming,
-)
-async function openStorage() {
-  if (storageBlocked.value) return
-  const target = {
-    path: '/scout/storage',
-    query: {
-      ...(scheduleJobId.value ? { job: scheduleJobId.value } : {}),
-      ...(scheduleJobId.value && run.value?.public_id ? { run: run.value.public_id } : {}),
-    },
-  }
-  if (stage.value === 'source' || dirty.value || schedulePanel.value?.dirty) {
-    storageConfirm.value = true
-    let yes
+);
+async function openSection(section) {
+  if (navigationBlocked.value) return;
+  const target =
+    section === "storage"
+      ? {
+          path: "/scout/storage",
+          query: {
+            ...(scheduleJobId.value ? { job: scheduleJobId.value } : {}),
+            ...(scheduleJobId.value && run.value?.public_id
+              ? { run: run.value.public_id }
+              : {}),
+          },
+        }
+      : {
+          path: "/scout/compare",
+          query:
+            stage.value === "result" && run.value?.public_id
+              ? { target: run.value.public_id }
+              : {},
+        };
+  if (stage.value === "source" || dirty.value || schedulePanel.value?.dirty) {
+    navigationConfirm.value = true;
+    let yes;
     try {
       yes = await confirmAction({
-        title: t('scout.retention.leaveTitle'),
-        message: t('scout.retention.leaveMessage'),
-        confirmText: t('scout.retention.leaveConfirm'),
-        cancelText: t('scout.retention.cancel'),
-        variant: 'warning',
-      })
+        title: t(
+          section === "storage"
+            ? "scout.retention.leaveTitle"
+            : "scout.design.leaveTitle",
+        ),
+        message: t(
+          section === "storage"
+            ? "scout.retention.leaveMessage"
+            : "scout.design.leaveMessage",
+        ),
+        confirmText: t(
+          section === "storage"
+            ? "scout.retention.leaveConfirm"
+            : "scout.design.leaveConfirm",
+        ),
+        cancelText: t("scout.retention.cancel"),
+        variant: "warning",
+      });
     } finally {
-      storageConfirm.value = false
+      navigationConfirm.value = false;
     }
-    if (!yes) return
+    if (!yes) return;
   }
-  await router.push(target)
+  await router.push(target);
 }
-const { preference } = useThemeMode()
-const selectedTheme = computed({ get: () => preference.value, set: applyThemeModePreference })
+const { preference } = useThemeMode();
+const selectedTheme = computed({
+  get: () => preference.value,
+  set: applyThemeModePreference,
+});
 const themeOptions = computed(() =>
-  ['light', 'dark', 'auto'].map((id) => ({ id, name: t(`scout.workspace.themes.${id}`) })),
-)
-const exportOptions = computed(() => ['json', 'csv'].map((id) => ({ id, name: id.toUpperCase() })))
+  ["light", "dark", "auto"].map((id) => ({
+    id,
+    name: t(`scout.workspace.themes.${id}`),
+  })),
+);
+const exportOptions = computed(() =>
+  ["json", "csv"].map((id) => ({ id, name: id.toUpperCase() })),
+);
 const steps = computed(() => {
-  const current = WORKFLOW_STEPS.indexOf(stage.value)
+  const current = WORKFLOW_STEPS.indexOf(stage.value);
   return WORKFLOW_STEPS.map((id, index) => ({
     id,
     marker: String(index + 1),
     label: t(`scout.workspace.steps.${id}`),
-    state: index < current ? 'passed' : index === current ? 'current' : 'upcoming',
+    state:
+      index < current ? "passed" : index === current ? "current" : "upcoming",
     disabled: !canVisit(id),
-  }))
-})
+  }));
+});
 const shownRecords = computed(() =>
-  stage.value === 'collect' ? records.value.slice(-20) : records.value,
-)
-const shownPreview = computed(() => previewRows.value.slice(0, 20))
-const sidebarPlan = computed(() => (stage.value === 'confirm' ? confirmationPlan.value : payload()))
+  stage.value === "collect" ? records.value.slice(-20) : records.value,
+);
+const shownPreview = computed(() => previewRows.value.slice(0, 20));
+const activeStatus = computed(() => run.value?.status);
+const previewPending = computed(
+  () => activeStatus.value === "exploring" || Boolean(returning.value),
+);
+const stalePreview = computed(
+  () =>
+    dirty.value ||
+    (activeStatus.value === "awaiting_confirmation" && !planReady.value),
+);
+const header = computed(() => {
+  const subtitle =
+    form.value.title || t(`scout.workspace.leads.${stage.value}`);
+  if (stage.value === "mode") {
+    return {
+      title: t("scout.newJob"),
+      subtitle: t("scout.design.chooseMode"),
+      status: t("scout.design.draft"),
+    };
+  }
+  if (stage.value === "source") {
+    if (mode.value === "visual") {
+      return {
+        title: t("scout.design.visual"),
+        subtitle,
+        ...visualPresentation.value,
+      };
+    }
+    if (mode.value === "ai") {
+      return {
+        title: t(
+          aiProposal.value ? "scout.design.aiProposal" : "scout.design.ai",
+        ),
+        subtitle: t("scout.design.aiHint"),
+        status: aiProposal.value ? t("scout.design.aiReady") : "",
+        tone: "success",
+      };
+    }
+    return {
+      title: t("scout.workspace.steps.source"),
+      subtitle,
+      status: t("scout.design.manual"),
+      tone: "info",
+    };
+  }
+  if (stage.value === "preview") {
+    const title = returning.value
+      ? "scout.flow.cancellingLead"
+      : previewPending.value
+        ? "scout.flow.preparing"
+        : stalePreview.value
+          ? "scout.design.refreshPreview"
+          : "scout.flow.previewReady";
+    return { title: t(title), subtitle };
+  }
+  if (stage.value === "confirm")
+    return { title: t("scout.workspace.confirmPlan"), subtitle };
+  if (stage.value === "collect") {
+    const title =
+      activeStatus.value === "running"
+        ? "scout.design.running"
+        : activeStatus.value === "paused"
+          ? "scout.design.paused"
+          : `scout.statuses.${activeStatus.value}`;
+    return { title: t(title), subtitle };
+  }
+  const title =
+    activeStatus.value === "completed"
+      ? "scout.design.savedResult"
+      : activeStatus.value === "completed_with_errors"
+        ? "scout.design.partial"
+        : `scout.statuses.${activeStatus.value || "completed"}`;
+  return { title: t(title), subtitle };
+});
 const journal = computed(() => {
-  const lines = run.value?.journal || []
-  return [...lines, ...(run.value?.events || []).filter((line) => !lines.includes(line))]
-})
+  const lines = run.value?.journal || [];
+  return [
+    ...lines,
+    ...(run.value?.events || []).filter((line) => !lines.includes(line)),
+  ];
+});
 const gaps = computed(() =>
   shownPreview.value.reduce(
     (count, row) =>
       count +
       Object.values(row.values || {}).filter(
-        (cell) => !cell?.images?.length && (cell?.normalized ?? cell?.raw ?? '') === '',
+        (cell) =>
+          !cell?.images?.length && (cell?.normalized ?? cell?.raw ?? "") === "",
       ).length,
     0,
   ),
-)
-const pipeline = computed(() => [
-  { id: 'fetch', value: progress.value.fetched },
+);
+const previewMetrics = computed(() => [
+  { label: t("scout.design.previewRows"), value: shownPreview.value.length },
   {
-    id: 'crawl',
-    value: run.value?.frontier
-      ? t('scout.workspace.foundUrls', {
-          count: Object.values(run.value.frontier).reduce((sum, n) => sum + (Number(n) || 0), 0),
-        })
-      : t('scout.workspace.notReported'),
+    label: t("scout.design.previewFields"),
+    value: (confirmationPlan.value?.fields || payload().fields).length,
   },
-  { id: 'extract', value: progress.value.extracted },
-  { id: 'records', value: progress.value.records },
-])
+  { label: t("scout.design.previewGaps"), value: gaps.value },
+  { label: t("scout.design.downloaded"), value: 0 },
+]);
+const collectionMetrics = computed(() =>
+  ["fetched", "extracted", "records", "errors"].map((key) => ({
+    label: t(`scout.workspace.metrics.${key}`),
+    value: progress.value[key],
+  })),
+);
+const resultMetrics = computed(() => {
+  const total = run.value?.record_count ?? records.value.length;
+  const complete =
+    !recordsLoading.value &&
+    !recordsError.value &&
+    records.value.length === total;
+  const saved = new Set();
+  const failed = new Set();
+  let missing = 0;
+  if (complete) {
+    for (const row of records.value) {
+      let hasMissingImage = false;
+      for (const value of Object.values(row.values || {})) {
+        if (!Array.isArray(value?.images)) continue;
+        if (!value.images.length) hasMissingImage = true;
+        for (const image of value.images) {
+          if (image.status === "saved" && image.public_id)
+            saved.add(image.public_id);
+          if (image.status === "failed" && image.source_url)
+            failed.add(image.source_url);
+        }
+      }
+      if (hasMissingImage) missing++;
+    }
+  }
+  return [
+    { label: t("scout.design.savedRows"), value: total },
+    {
+      label: t("scout.design.savedImages"),
+      value: complete ? saved.size : "—",
+    },
+    {
+      label: t("scout.design.failedImages"),
+      value: complete ? failed.size : "—",
+    },
+    { label: t("scout.design.missingImages"), value: complete ? missing : "—" },
+  ];
+});
+const pipeline = computed(() => [
+  { id: "fetch", value: progress.value.fetched },
+  {
+    id: "crawl",
+    value: run.value?.frontier
+      ? t("scout.workspace.foundUrls", {
+          count: Object.values(run.value.frontier).reduce(
+            (sum, n) => sum + (Number(n) || 0),
+            0,
+          ),
+        })
+      : t("scout.workspace.notReported"),
+  },
+  { id: "extract", value: progress.value.extracted },
+  { id: "records", value: progress.value.records },
+]);
 function canVisit(id) {
-  if (loading.value || returning.value) return false
+  if (loading.value || returning.value) return false;
   if (!run.value)
-    return ['mode', 'source'].includes(id) && (id === 'mode' || stage.value === 'source')
-  if (run.value.status === 'awaiting_confirmation')
-    return id === 'preview' || (id === 'confirm' && canConfirm.value)
-  return id === stage.value
+    return (
+      ["mode", "source"].includes(id) &&
+      (id === "mode" || stage.value === "source")
+    );
+  if (run.value.status === "awaiting_confirmation")
+    return id === "preview" || (id === "confirm" && canConfirm.value);
+  return id === stage.value;
 }
 function visitStep(id) {
-  if (!canVisit(id)) return
-  if (id === 'mode' || id === 'source') editorStep.value = id
-  if (id === 'preview') confirmationOpen.value = false
-  if (id === 'confirm') confirmationOpen.value = true
+  if (!canVisit(id)) return;
+  if (id === "mode" || id === "source") editorStep.value = id;
+  if (id === "preview") confirmationOpen.value = false;
+  if (id === "confirm") confirmationOpen.value = true;
+}
+function resetMode() {
+  visualPresentation.value = null;
+  aiProposal.value = false;
+  editorStep.value = "mode";
 }
 function openSystemSettings() {
-  window.dispatchEvent(new CustomEvent('ergo:open-user-settings', { detail: { tab: 'system' } }))
+  window.dispatchEvent(
+    new CustomEvent("ergo:open-user-settings", { detail: { tab: "system" } }),
+  );
 }
 </script>
 
 <template>
-  <div class="scout-workflow container-fluid" :aria-busy="loading">
-    <div v-if="inspectorPrototype" class="alert alert-info" role="note">
-      {{ t('scout.inspector.prototype') }}
-    </div>
-    <header class="scout-header">
-      <div>
-        <div class="scout-eyebrow">{{ t('scout.title') }}</div>
-        <h1 class="h3 mb-1">
-          {{ stage === 'mode' ? t('scout.newJob') : form.title || t('scout.workspace.job') }}
-        </h1>
-        <p class="scout-muted mb-0">{{ t(`scout.workspace.leads.${stage}`) }}</p>
-      </div>
-      <div class="scout-toolbar">
-        <button
-          type="button"
-          class="btn btn-outline-secondary"
-          :disabled="storageBlocked"
-          @click="openStorage"
-        >
-          {{ t('scout.retention.title') }}
-        </button>
+  <div class="scout-workflow scout-design container-fluid" :aria-busy="loading">
+    <ScoutWorkspaceHeader
+      v-bind="header"
+      :locked="navigationBlocked"
+      @navigate="openSection"
+    >
+      <template #actions>
         <SelectBox
           id="scout-theme"
           v-model="selectedTheme"
@@ -203,10 +370,14 @@ function openSystemSettings() {
           :include-all-option="false"
           :aria-label="t('scout.workspace.theme')"
         />
-        <button type="button" class="btn btn-outline-secondary" @click="openSystemSettings">
-          <Settings2 :size="17" aria-hidden="true" /><span>{{
-            t('scout.workspace.systemSettings')
-          }}</span>
+        <button
+          type="button"
+          class="btn btn-outline-secondary scout-system-button"
+          :title="t('scout.workspace.systemSettings')"
+          :aria-label="t('scout.workspace.systemSettings')"
+          @click="openSystemSettings"
+        >
+          <Settings2 :size="18" aria-hidden="true" />
         </button>
         <button
           v-if="stage !== 'mode'"
@@ -215,10 +386,10 @@ function openSystemSettings() {
           :disabled="loading || !!returning"
           @click="newJob"
         >
-          {{ t('scout.newJob') }}
+          {{ t("scout.newJob") }}
         </button>
-      </div>
-    </header>
+      </template>
+    </ScoutWorkspaceHeader>
     <ScoutStepRail
       :steps="steps"
       interactive
@@ -226,303 +397,386 @@ function openSystemSettings() {
       class="scout-step-rail"
       @select="visitStep"
     />
-    <div v-if="pageError" class="alert alert-danger" role="alert">{{ pageError }}</div>
-    <div v-if="connectionLost" class="alert alert-warning scout-alert-actions" role="alert">
-      <div>{{ t('scout.workspace.connectionLost') }}</div>
+    <div v-if="inspectorPrototype" class="alert alert-info" role="note">
+      {{ t("scout.inspector.prototype") }}
+    </div>
+    <div v-if="pageError" class="alert alert-danger" role="alert">
+      {{ pageError }}
+    </div>
+    <div
+      v-if="connectionLost"
+      class="alert alert-warning scout-alert-actions"
+      role="alert"
+    >
+      <div>{{ t("scout.workspace.connectionLost") }}</div>
       <button
         type="button"
         class="btn btn-outline-secondary btn-sm"
         :disabled="loading"
         @click="reload"
       >
-        {{ t('scout.workspace.retry') }}
+        {{ t("scout.workspace.retry") }}
       </button>
     </div>
-    <div
-      class="scout-workspace"
-      :class="{ 'scout-workspace--visual': stage === 'source' && mode === 'visual' }"
-    >
+
+    <div class="scout-workspace">
       <div class="scout-main">
-        <FormCard v-if="stage === 'mode'">
-          <div class="scout-panel-content">
-            <h2 class="h5">{{ t('scout.workspace.chooseMode') }}</h2>
-            <p class="scout-muted">{{ t('scout.workspace.modeHint') }}</p>
-            <ScoutModePicker v-model="mode" :disabled="loading" />
-          </div>
-          <template #footer
-            ><button
-              type="button"
-              class="btn btn-primary"
-              :disabled="loading"
-              @click="editorStep = 'source'"
-            >
-              {{ t('scout.workspace.toSource')
-              }}<ArrowRight :size="17" aria-hidden="true" /></button
-          ></template>
-        </FormCard>
-        <section v-else-if="stage === 'source'" :aria-label="t('scout.workspace.steps.source')">
-          <div class="scout-source-heading">
+        <template v-if="stage === 'mode'">
+          <ScoutModePicker
+            v-model="mode"
+            :disabled="loading"
+            @open="editorStep = 'source'"
+          />
+          <aside class="scout-design-note">
+            <Info :size="18" aria-hidden="true" />
             <div>
-              <span class="scout-muted small">{{ t('scout.workspace.modeLabel') }}</span>
-              <div class="fw-semibold">{{ t(`scout.workspace.modes.${mode}.title`) }}</div>
+              <strong>{{ t("scout.design.startsAfterReview") }}</strong>
+              <p>{{ t("scout.workspace.previewOnly") }}</p>
             </div>
-            <button
-              type="button"
-              class="btn btn-outline-secondary btn-sm"
-              :disabled="loading"
-              @click="editorStep = 'mode'"
-            >
-              {{ t('scout.workspace.changeMode') }}
-            </button>
-          </div>
-          <template v-if="mode === 'manual'">
-            <ScoutRuleEditor
-              v-model="form"
-              :errors="errors"
-              :disabled="loading"
-              @add-field="addField"
-              @remove-field="removeField"
-            />
-            <div class="scout-actions">
-              <span class="scout-muted small">{{ t('scout.workspace.previewOnly') }}</span
-              ><button type="button" class="btn btn-primary" :disabled="loading" @click="checkPage">
-                {{ loading ? t('scout.flow.preparing') : t('scout.workspace.preparePreview')
-                }}<ArrowRight :size="17" aria-hidden="true" />
-              </button>
-            </div>
-          </template>
+          </aside>
+        </template>
+
+        <section
+          v-else-if="stage === 'source'"
+          class="scout-source-stage"
+          :aria-label="t('scout.workspace.steps.source')"
+        >
           <ScoutVisualEditor
-            v-else-if="mode === 'visual'"
+            v-if="mode === 'visual'"
             v-model="form"
             :inspector-prototype="inspectorPrototype || inspectorEnabled"
             :disabled="loading"
             @valid="visualPlanValid = $event"
             @preview="checkPage"
             @manual="mode = 'manual'"
+            @back="resetMode"
+            @presentation="visualPresentation = $event"
           />
+          <template v-else-if="mode === 'manual'">
+            <ScoutRuleEditor
+              v-model="form"
+              :errors="errors"
+              :disabled="loading"
+              @add-field="addField"
+              @remove-field="removeField"
+            >
+              <template #advanced
+                ><ScoutPlanOptions v-model="form" :disabled="loading"
+              /></template>
+            </ScoutRuleEditor>
+            <div class="scout-action-dock">
+              <button
+                type="button"
+                class="btn btn-outline-secondary"
+                :disabled="loading"
+                @click="resetMode"
+              >
+                {{ t("scout.workspace.changeMode") }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="loading"
+                @click="checkPage"
+              >
+                {{
+                  loading
+                    ? t("scout.flow.preparing")
+                    : t("scout.workspace.preparePreview")
+                }}
+                <ArrowRight :size="17" aria-hidden="true" />
+              </button>
+            </div>
+          </template>
           <ScoutAiEditor
             v-else
             v-model="form"
             :disabled="loading"
             @apply="applySuggestion"
             @manual="mode = 'manual'"
+            @back="resetMode"
+            @proposal="aiProposal = $event"
           />
-          <ScoutPlanOptions v-model="form" :disabled="loading" />
+          <ScoutPlanOptions
+            v-if="mode !== 'manual'"
+            v-model="form"
+            :disabled="loading"
+          />
         </section>
-        <FormCard v-else-if="stage === 'preview'">
-          <div class="scout-panel-content">
-            <template v-if="run?.status === 'exploring' || returning"
-              ><SpinnerLoading />
-              <h2 class="h5 mt-3">
-                {{ returning ? t('scout.flow.cancellingLead') : t('scout.flow.preparing') }}
-              </h2>
-              <p class="scout-muted mb-0">
-                {{ returning ? t('scout.workspace.returning') : t('scout.flow.preparingLead') }}
-              </p></template
+
+        <template v-else-if="stage === 'preview'">
+          <div v-if="previewPending" class="scout-card" role="status">
+            <SpinnerLoading />
+            <p class="scout-muted mt-3">
+              {{
+                returning
+                  ? t("scout.workspace.returning")
+                  : t("scout.flow.preparingLead")
+              }}
+            </p>
+          </div>
+          <template v-else>
+            <ScoutRunMetrics
+              v-if="shownPreview.length"
+              :items="previewMetrics"
+            />
+            <div
+              v-if="previewError || run?.error_summary"
+              class="alert alert-warning mb-0"
+              role="alert"
             >
-            <template v-else>
-              <h2 class="h5">{{ t('scout.flow.previewReady') }}</h2>
-              <p class="scout-muted">{{ t('scout.workspace.previewLead') }}</p>
-              <div
-                v-if="previewError || run?.error_summary"
-                class="alert alert-warning"
-                role="alert"
-              >
-                {{ previewError || run.error_summary }}
-              </div>
-              <p v-if="!previewRows.length" class="alert alert-info" role="status">
-                {{ t('scout.flow.previewEmpty') }}
+              {{ previewError || run.error_summary }}
+            </div>
+            <p v-if="gaps" class="alert alert-warning mb-0" role="status">
+              {{ t("scout.flow.gaps", { count: gaps }) }}
+            </p>
+            <section class="scout-card">
+              <header class="scout-panel-heading">
+                <h2>{{ t("scout.design.sample") }}</h2>
+              </header>
+              <p v-if="!previewRows.length" class="scout-muted" role="status">
+                {{ t("scout.flow.previewEmpty") }}
               </p>
-              <template v-else
-                ><p class="scout-muted small">
+              <template v-else>
+                <p class="scout-muted small">
                   {{
-                    t('scout.flow.sample', {
+                    t("scout.flow.sample", {
                       shown: shownPreview.length,
                       total: previewRows.length,
                     })
                   }}
                 </p>
-                <p v-if="gaps" class="scout-warning small">
-                  {{ t('scout.flow.gaps', { count: gaps }) }}
-                </p>
-                <ScoutRecordsTable :records="shownPreview" preview
-              /></template>
-              <p
-                v-if="dirty || (run?.status === 'awaiting_confirmation' && !planReady)"
-                class="alert alert-warning mt-3"
-                role="status"
-              >
-                {{ t('scout.workspace.planChanged') }}
-              </p>
-            </template>
-          </div>
-          <template #footer
-            ><button
+                <ScoutRecordsTable :records="shownPreview" preview />
+              </template>
+            </section>
+            <p
+              v-if="stalePreview"
+              class="alert alert-warning mb-0"
+              role="status"
+            >
+              {{ t("scout.workspace.planChanged") }}
+            </p>
+          </template>
+          <div class="scout-action-dock">
+            <button
               type="button"
               class="btn btn-outline-secondary"
               :disabled="busy || !!returning"
               @click="changeRules"
             >
               <ArrowLeft :size="17" aria-hidden="true" />{{
-                t('scout.workspace.editRules')
-              }}</button
-            ><button
-              v-if="run?.status === 'awaiting_confirmation' && previewRows.length"
+                t("scout.workspace.editRules")
+              }}
+            </button>
+            <button
+              v-if="
+                run?.status === 'awaiting_confirmation' && previewRows.length
+              "
               type="button"
               class="btn btn-primary"
               :disabled="!canConfirm"
               @click="confirmationOpen = true"
             >
-              {{ t('scout.workspace.toConfirmation')
-              }}<ArrowRight :size="17" aria-hidden="true" /></button
-          ></template>
-        </FormCard>
-        <FormCard v-else-if="stage === 'confirm'">
-          <div class="scout-panel-content">
-            <h2 class="h5">{{ t('scout.workspace.confirmPlan') }}</h2>
-            <p class="scout-muted">{{ t('scout.workspace.beforeStart') }}</p>
-            <ScoutPlanSummary
-              v-if="confirmationPlan"
-              :plan="confirmationPlan"
-              :mode="mode"
-              expanded
-              :approved="!!run?.approved"
-            />
-            <div class="alert alert-info mt-4 mb-0">{{ t('scout.workspace.confirmHint') }}</div>
-            <p v-if="run?.approved" class="scout-warning mt-3 mb-0" role="status">
-              {{ t('scout.flow.startHeld') }}
-            </p>
-            <p v-if="!planReady" class="alert alert-warning mt-3 mb-0">
-              {{ t('scout.workspace.planChanged') }}
-            </p>
+              {{ t("scout.workspace.toConfirmation")
+              }}<ArrowRight :size="17" aria-hidden="true" />
+            </button>
           </div>
-          <template #footer
-            ><button
+        </template>
+
+        <template v-else-if="stage === 'confirm'">
+          <ScoutPlanSummary
+            v-if="confirmationPlan"
+            :plan="confirmationPlan"
+            :mode="mode"
+            expanded
+            :approved="!!run?.approved"
+          />
+          <aside class="scout-design-note">
+            <Info :size="18" aria-hidden="true" />
+            <div>{{ t("scout.workspace.confirmHint") }}</div>
+          </aside>
+          <p
+            v-if="run?.approved"
+            class="alert alert-warning mb-0"
+            role="status"
+          >
+            {{ t("scout.flow.startHeld") }}
+          </p>
+          <p v-if="!planReady" class="alert alert-warning mb-0" role="status">
+            {{ t("scout.workspace.planChanged") }}
+          </p>
+          <div class="scout-action-dock">
+            <button
               type="button"
               class="btn btn-outline-secondary"
               :disabled="loading"
               @click="confirmationOpen = false"
             >
               <ArrowLeft :size="17" aria-hidden="true" />{{
-                t('scout.workspace.toPreview')
-              }}</button
-            ><button
+                t("scout.workspace.toPreview")
+              }}
+            </button>
+            <button
               type="button"
               class="btn btn-primary"
               :disabled="!canConfirm || connectionLost"
               @click="confirmAndStart"
             >
-              {{ run?.approved ? t('scout.start') : t('scout.workspace.confirmAndRun') }}
-            </button></template
-          >
-        </FormCard>
-        <FormCard v-else-if="stage === 'collect'">
-          <div class="scout-panel-content">
-            <h2 class="h5" aria-live="polite">{{ t(`scout.statuses.${run?.status}`) }}</h2>
-            <p class="scout-muted">
-              {{ t(`scout.workspace.execution.${run?.status || 'running'}`) }}
-            </p>
-            <div class="scout-stats">
-              <div v-for="key in ['fetched', 'extracted', 'records', 'errors']" :key="key">
-                <strong>{{ progress[key] }}</strong
-                ><span>{{ t(`scout.workspace.metrics.${key}`) }}</span>
-              </div>
-            </div>
-            <h3 class="h6">{{ t('scout.workspace.processingOrder') }}</h3>
-            <ol class="scout-pipeline">
-              <li v-for="(item, index) in pipeline" :key="item.id">
-                <span class="scout-pipeline__number" aria-hidden="true">{{ index + 1 }}</span>
-                <div>
-                  <strong>{{ t(`scout.workspace.pipeline.${item.id}.title`) }}</strong>
-                  <p class="scout-muted small mb-0">
-                    {{ t(`scout.workspace.pipeline.${item.id}.description`) }}
-                  </p>
-                </div>
-                <span class="scout-pipeline__value">{{ item.value }}</span>
-              </li>
-            </ol>
-            <p class="scout-muted small">{{ t('scout.workspace.noPercentage') }}</p>
-            <p v-if="!shownRecords.length" class="scout-muted" role="status">
-              {{ t('scout.flow.waitingRows') }}
-            </p>
-            <template v-else
-              ><h3 class="h6 mt-4">
-                {{
-                  t('scout.flow.recent', { shown: shownRecords.length, total: progress.records })
-                }}
-              </h3>
-              <ScoutRecordsTable :records="shownRecords" :run-id="run.public_id" preview
-            /></template>
+              {{
+                run?.approved
+                  ? t("scout.start")
+                  : t("scout.workspace.confirmAndRun")
+              }}
+            </button>
           </div>
-          <template #footer
-            ><button
-              v-if="run?.status === 'running'"
-              type="button"
-              class="btn btn-primary"
-              :disabled="busy || connectionLost"
-              @click="pause"
-            >
-              {{ t('scout.pause') }}</button
-            ><button
-              v-if="run?.status === 'paused'"
-              type="button"
-              class="btn btn-primary"
-              :disabled="busy || connectionLost"
-              @click="resume"
-            >
-              {{ t('scout.resume') }}</button
-            ><button
-              v-if="['running', 'paused'].includes(run?.status)"
+        </template>
+
+        <template v-else-if="stage === 'collect'">
+          <ScoutRunMetrics :items="collectionMetrics" />
+          <section class="scout-card">
+            <header class="scout-panel-heading">
+              <h2>{{ t("scout.workspace.processingOrder") }}</h2>
+            </header>
+            <p class="scout-muted" role="status">
+              {{ t(`scout.workspace.execution.${run?.status || "running"}`) }}
+            </p>
+            <div class="table-responsive">
+              <table class="table scout-process-table">
+                <thead>
+                  <tr>
+                    <th scope="col">{{ t("scout.design.processStep") }}</th>
+                    <th scope="col">
+                      {{ t("scout.design.processDescription") }}
+                    </th>
+                    <th scope="col">{{ t("scout.design.processStatus") }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in pipeline" :key="item.id">
+                    <th scope="row">
+                      {{ t(`scout.workspace.pipeline.${item.id}.title`) }}
+                    </th>
+                    <td>
+                      {{ t(`scout.workspace.pipeline.${item.id}.description`) }}
+                    </td>
+                    <td>
+                      <span class="scout-chip" data-tone="info">{{
+                        item.value
+                      }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section class="scout-card">
+            <header class="scout-panel-heading">
+              <h2>{{ t("scout.design.results") }}</h2>
+            </header>
+            <p v-if="!shownRecords.length" class="scout-muted" role="status">
+              {{ t("scout.flow.waitingRows") }}
+            </p>
+            <template v-else>
+              <p class="scout-muted small">
+                {{
+                  t("scout.flow.recent", {
+                    shown: shownRecords.length,
+                    total: progress.records,
+                  })
+                }}
+              </p>
+              <ScoutRecordsTable
+                :records="shownRecords"
+                :run-id="run.public_id"
+                preview
+              />
+            </template>
+          </section>
+          <div
+            v-if="['running', 'paused'].includes(run?.status)"
+            class="scout-action-dock"
+          >
+            <button
               type="button"
               class="btn btn-outline-secondary"
               :disabled="busy || connectionLost"
               @click="cancelRun"
             >
-              {{ t('scout.cancel') }}
-            </button></template
+              {{ t("scout.cancel") }}
+            </button>
+            <button
+              v-if="run.status === 'running'"
+              type="button"
+              class="btn btn-primary"
+              :disabled="busy || connectionLost"
+              @click="pause"
+            >
+              {{ t("scout.pause") }}
+            </button>
+            <button
+              v-else
+              type="button"
+              class="btn btn-primary"
+              :disabled="busy || connectionLost"
+              @click="resume"
+            >
+              {{ t("scout.resume") }}
+            </button>
+          </div>
+        </template>
+
+        <template v-else>
+          <ScoutRunMetrics :items="resultMetrics" />
+          <p
+            v-if="run?.error_summary"
+            class="alert alert-warning mb-0"
+            role="alert"
           >
-        </FormCard>
-        <FormCard v-else>
-          <div class="scout-panel-content">
-            <h2 class="h5">{{ t(`scout.statuses.${run?.status || 'completed'}`) }}</h2>
-            <p v-if="run?.error_summary" class="alert alert-warning" role="alert">
-              {{ run.error_summary }}
+            {{ run.error_summary }}
+          </p>
+          <p
+            v-if="run?.status === 'completed_with_errors' || run?.stop_reason"
+            class="alert alert-warning mb-0"
+          >
+            {{ t("scout.workspace.partialResult") }}
+          </p>
+          <section class="scout-card">
+            <header class="scout-panel-heading">
+              <h2>{{ t("scout.design.results") }}</h2>
+              <RouterLink
+                v-if="
+                  run &&
+                  ['completed', 'completed_with_errors'].includes(run.status)
+                "
+                :to="{
+                  path: '/scout/compare',
+                  query: { target: run.public_id },
+                }"
+                class="btn btn-outline-secondary"
+              >
+                {{ t("scout.comparison.open") }}
+              </RouterLink>
+            </header>
+            <p v-if="recordsLoading" role="status">
+              {{ t("scout.product.loadingRecords") }}
             </p>
             <p
-              v-if="run?.status === 'completed_with_errors' || run?.stop_reason"
-              class="alert alert-warning"
+              v-if="!records.length && !recordsError && !recordsLoading"
+              class="scout-muted"
             >
-              {{ t('scout.workspace.partialResult') }}
+              {{ t("scout.flow.resultEmpty") }}
             </p>
-            <p class="scout-muted">
-              {{ t('scout.flow.gotRecords', { records: run?.record_count || 0 }) }}
-            </p>
-            <p v-if="recordsLoading" role="status">{{ t('scout.product.loadingRecords') }}</p>
-            <p class="small scout-muted">
-              {{ t('scout.product.loaded', { count: records.length }) }}
-            </p>
-            <p v-if="!records.length && !recordsError && !recordsLoading" class="scout-muted">
-              {{ t('scout.flow.resultEmpty') }}
-            </p>
-            <ScoutRecordsTable v-if="records.length" :records="records" :run-id="run.public_id" />
-          </div>
-          <template #footer
-            ><button
-              type="button"
-              class="btn btn-outline-secondary"
-              :disabled="loading"
-              @click="changeRules"
-            >
-              {{ t('scout.workspace.editRules') }}
-            </button>
-            <RouterLink
-              v-if="run && ['completed', 'completed_with_errors'].includes(run.status)"
-              :to="{ path: '/scout/compare', query: { target: run.public_id } }"
-              class="btn btn-outline-secondary"
-              >{{ t('scout.comparison.open') }}</RouterLink
-            >
-            <div v-if="canExport" class="scout-export">
+            <ScoutRecordsTable
+              v-if="records.length"
+              :records="records"
+              :run-id="run.public_id"
+            />
+            <div v-if="records.length" class="scout-result-tools">
+              <span class="small scout-muted">{{
+                t("scout.product.loaded", { count: records.length })
+              }}</span>
               <SelectBox
+                v-if="canExport"
                 id="scout-export"
                 v-model="exportKind"
                 :options="exportOptions"
@@ -531,30 +785,51 @@ function openSystemSettings() {
                 :include-all-option="false"
                 :disabled="exporting"
                 :aria-label="t('scout.flow.exportKind')"
-              /><button
-                type="button"
-                class="btn btn-primary"
-                :disabled="exporting"
-                @click="exportFile"
-              >
-                <Download :size="17" aria-hidden="true" />{{ t('scout.flow.download') }}
-              </button>
-            </div></template
-          >
-        </FormCard>
-        <div v-if="recordsError" class="alert alert-warning scout-alert-actions mt-3" role="alert">
-          <span>{{ t('scout.workspace.recordsFailed') }}</span
-          ><button
+              />
+            </div>
+          </section>
+          <div class="scout-action-dock">
+            <button
+              type="button"
+              class="btn btn-outline-secondary"
+              :disabled="loading"
+              @click="changeRules"
+            >
+              {{ t("scout.workspace.editRules") }}
+            </button>
+            <button
+              v-if="canExport"
+              type="button"
+              class="btn btn-primary"
+              :disabled="exporting"
+              @click="exportFile"
+            >
+              <Download :size="17" aria-hidden="true" />{{
+                t("scout.flow.download")
+              }}
+            </button>
+          </div>
+        </template>
+
+        <div
+          v-if="recordsError"
+          class="alert alert-warning scout-alert-actions mb-0"
+          role="alert"
+        >
+          <span>{{ t("scout.workspace.recordsFailed") }}</span>
+          <button
             type="button"
             class="btn btn-outline-secondary btn-sm"
             :disabled="loading"
             @click="reload"
           >
-            {{ t('scout.workspace.retry') }}
+            {{ t("scout.workspace.retry") }}
           </button>
         </div>
         <ScoutSchedulePanel
-          v-if="scheduleJobId && ['confirm', 'collect', 'result'].includes(stage)"
+          v-if="
+            scheduleJobId && ['confirm', 'collect', 'result'].includes(stage)
+          "
           ref="schedulePanel"
           :key="scheduleJobId"
           :job-id="scheduleJobId"
@@ -567,7 +842,7 @@ function openSystemSettings() {
           class="scout-execution-details"
           @toggle="stage === 'collect' && $event.target.open && reload()"
         >
-          <summary>{{ t('scout.flow.details') }}</summary>
+          <summary>{{ t("scout.flow.details") }}</summary>
           <ScoutCrawlSummary
             v-if="run.crawl?.mode === 'site'"
             :run="run"
@@ -583,21 +858,6 @@ function openSystemSettings() {
           </ul>
         </details>
       </div>
-      <aside class="scout-sidebar" :aria-label="t('scout.workspace.planTitle')">
-        <template v-if="stage === 'mode'"
-          ><h2 class="h6">{{ t('scout.workspace.commonPath') }}</h2>
-          <ol class="scout-path">
-            <li v-for="step in WORKFLOW_STEPS" :key="step">
-              {{ t(`scout.workspace.steps.${step}`) }}
-            </li>
-          </ol></template
-        >
-        <template v-else-if="sidebarPlan">
-          <h2 class="h6">{{ t('scout.workspace.planTitle') }}</h2>
-          <ScoutPlanSummary :plan="sidebarPlan" :mode="mode" :approved="!!run?.approved" />
-        </template>
-        <p class="scout-sidebar-note">{{ t('scout.workspace.previewOnly') }}</p>
-      </aside>
     </div>
   </div>
 </template>

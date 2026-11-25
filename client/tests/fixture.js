@@ -21,6 +21,7 @@ import ScoutUX004 from '../prototypes/ScoutUX004.vue'
 import locales from '../js/locales.js'
 import '../styles/scout-workflow.scss'
 import '../prototypes/inspector.scss'
+import '../styles/scout-design.scss'
 import { installVisualFixture } from './visual-fixture.js'
 
 const jobId = '11111111-1111-4111-8111-111111111111'

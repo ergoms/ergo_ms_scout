@@ -15,6 +15,7 @@ from .public_http import fetch_public_html, public_url_allowed
 from .proxy_http import fetch_proxy_html, proxy_target_allowed
 from .proxy_profiles import PROXY_RETRY_DELAYS, validate_revision
 from .tasks_exec import inline_runner
+from .visual_presentation import styled_editor
 from .visual_rules import VisualDocument
 
 logger = logging.getLogger('modules.scout')
@@ -57,7 +58,7 @@ def load_snapshot(public_id):
     snapshot = pending.get()
     try:
         page = _fetch_snapshot(snapshot)
-        VisualDocument(page['body'], page['charset'])
+        document = VisualDocument(page['body'], page['charset'])
     except ScoutError as exc:
         result = {'status': 'failed', 'error_code': exc.code, 'error_detail': str(exc)[:400]}
     except Exception:
@@ -65,6 +66,15 @@ def load_snapshot(public_id):
         result = {'status': 'failed', 'error_code': 'snapshot_failed', 'error_detail': 'Не удалось подготовить снимок'}
     else:
         result = {'status': 'ready', 'body': page['body'], 'charset': page['charset'], 'final_url': page['final_url']}
+        try:
+            from .visual_assets import VisualAssets
+
+            base_url = page['final_url'] or snapshot.source_url
+            result['editor_html'], result['editor_tags'] = styled_editor(
+                document, VisualAssets(snapshot, base_url), base_url,
+            )
+        except Exception:
+            logger.exception('SCOUT не применил оформление к снимку %s', public_id)
     pending.filter(status='fetching', created_at__gt=timezone.now() - _LOAD_DEADLINE).update(**result)
 
 

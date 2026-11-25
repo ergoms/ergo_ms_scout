@@ -2,6 +2,7 @@ import '../styles/scout-comparison.scss'
 import '../styles/scout-retention.scss'
 import '../styles/scout-workflow.scss'
 import '../prototypes/inspector.scss'
+import '../styles/scout-design.scss'
 
 const loadHome = () => import('../components/ScoutPage.vue')
 

@@ -143,7 +143,9 @@ module.exports = async (browser, output) => {
     assert(await deletion().isDisabled())
     assert((await preview().innerText()).includes('Неизвестно'))
     assert((await preview().innerText()).includes('сравнение'))
-    await preview().getByText(/Собранных изображений к удалению: 2\. Объём: 500/).waitFor()
+    await preview()
+      .getByText(/Собранных изображений к удалению: 2\. Объём: 500/)
+      .waitFor()
     await preview().getByRole('button', { name: 'Загрузить следующую порцию', exact: true }).click()
     await preview()
       .getByText('Общий файл защищён другими ссылками', { exact: true })
@@ -159,7 +161,11 @@ module.exports = async (browser, output) => {
       (c) => c[1] === 'scout/retention/cleanups/',
     ).length
     await deletion().click()
+    await page.getByRole('heading', { name: 'Подтверждение очистки', exact: true }).waitFor()
+    const imageSummary = page.getByRole('row', { name: /Собранные изображения/ })
+    assert.match(await imageSummary.innerText(), /2.*500/)
     await page.getByRole('button', { name: 'Отмена', exact: true }).click()
+    assert(await deletion().evaluate((button) => button === document.activeElement))
     assert.equal(
       (await mutations()).filter((c) => c[1] === 'scout/retention/cleanups/').length,
       writesBefore,
@@ -226,7 +232,9 @@ module.exports = async (browser, output) => {
     await retryCleanup.click()
     const retrying = section('Операция очистки · Завершена с ошибками')
     for (const last of [100, 150, 200, 215]) {
-      await retrying.getByRole('button', { name: 'Загрузить следующую порцию', exact: true }).click()
+      await retrying
+        .getByRole('button', { name: 'Загрузить следующую порцию', exact: true })
+        .click()
       await retrying.getByText('item-' + last, { exact: true }).waitFor()
     }
     const second = (await mutations()).filter((c) => c[1] === 'scout/retention/cleanups/').at(-1)[2]
@@ -297,6 +305,7 @@ module.exports = async (browser, output) => {
     await page.evaluate(
       () => (location.hash = '/scout/storage?job=33333333-3333-4333-8333-333333333333'),
     )
+    await page.getByRole('button', { name: 'Подготовить очистку', exact: true }).click()
     await page
       .getByRole('button', { name: 'Рассчитать предварительный просмотр', exact: true })
       .waitFor()

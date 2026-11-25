@@ -33,6 +33,11 @@ def _require_image(media):
         raise _unsupported_image()
 
 
+def _require_css(media):
+    if media != 'text/css':
+        raise FetchError('not_css', _('Ответ не является таблицей стилей CSS'), retryable=False)
+
+
 def _unsupported_image():
     return FetchError('unsupported_image', _('Источник не вернул изображение JPEG, PNG, GIF или WebP'), retryable=False)
 
@@ -90,6 +95,13 @@ def fetch_image(url: str, *, timeout_seconds: int, max_bytes: int, url_allowed=N
         raise _unsupported_image()
     result['content_type'] = media
     return result
+
+
+def fetch_css(url: str, *, timeout_seconds: int, max_bytes: int, url_allowed=None, handlers=()) -> dict:
+    return _fetch_response(
+        url, timeout_seconds=timeout_seconds, max_bytes=max_bytes, url_allowed=url_allowed,
+        handlers=handlers, accept='text/css', check_media=_require_css,
+    )
 
 
 def fetch_xml(url: str, *, timeout_seconds: int, max_bytes: int, url_allowed=None, handlers=()) -> dict:

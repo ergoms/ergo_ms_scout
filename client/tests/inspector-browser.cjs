@@ -8,11 +8,12 @@ module.exports = async (browser, output) => {
     await page.goto(pathToFileURL(path.join(output, 'fixture.html')).href + '#/ux-004')
     const ui = page.locator('.scout-workflow')
     await ui.getByText(/Прототип UX-004/).waitFor()
-    await ui.locator('.scout-mode').nth(1).click()
-    await ui.getByRole('button', { name: 'Далее: источник и правила' }).click()
+    await ui.getByRole('button', { name: 'Выбрать на странице', exact: true }).click()
     await ui.locator('#scout-visual-url').fill('https://books.toscrape.com/')
     await ui.getByRole('button', { name: 'Загрузить страницу', exact: true }).click()
     const frame = page.frameLocator('.scout-snapshot-frame iframe')
+    const preview = ui.getByRole('button', { name: /^К предпросмотру/ })
+    const refresh = ui.getByRole('button', { name: 'Обновить снимок', exact: true })
     await frame.locator('article').first().waitFor()
     // Opening a second branch while the first response is delayed must remain independent.
     const firstBranch = ui.locator('[role=treeitem][data-node=n1]')
@@ -61,12 +62,14 @@ module.exports = async (browser, output) => {
     await frame.locator('p').first().hover()
     await ui.locator('rect[data-role="hover"]').waitFor({ state: 'attached' })
     assert.equal(await checks(), before)
+    await ui.locator('.scout-visual-record-settings > summary').click()
     await ui.locator('#scout-visual-cards').check()
     await frame.locator('p').first().click()
+    await ui.locator('.scout-visual-navigator > summary').click()
     await ui.getByRole('button', { name: 'Родитель', exact: true }).click()
     await ui
       .locator('.scout-prototype-selected-label')
-      .getByText('article.product_pod', { exact: true })
+      .filter({ hasText: 'article.product_pod' })
       .waitFor()
     assert.equal(await checks(), before)
     await ui.getByRole('button', { name: 'Проверить правило', exact: true }).click()
@@ -77,12 +80,12 @@ module.exports = async (browser, output) => {
     await ui.locator('.scout-prototype-search-results .scout-prototype-node').last().click()
     await ui
       .locator('.scout-prototype-selected-label')
-      .getByText('p.price_color', { exact: true })
+      .filter({ hasText: 'p.price_color' })
       .waitFor()
     await ui.locator('[role=treeitem][data-node=n60]').waitFor()
     await ui.locator('#scout-visual-name').fill('price')
     await ui.getByRole('button', { name: 'Проверить правило', exact: true }).click()
-    await ui.getByText('Совпадений в примерах: 20', { exact: true }).waitFor()
+    await ui.getByText('Совпадений: 20', { exact: true }).waitFor()
     const body = await page.evaluate(
       () =>
         window.__scoutTest.calls
@@ -114,14 +117,15 @@ module.exports = async (browser, output) => {
     await cancel.click()
     await page.evaluate(() => window.__scoutTest.visual.release())
     assert.equal(await ui.locator('.scout-visual-check').count(), 0)
-    assert.equal(await ui.locator('#scout-visual-css').inputValue(), '')
-    assert.equal(await cancel.isDisabled(), true)
+    assert.equal(await ui.locator('#scout-visual-css').inputValue(), 'p.price_color')
+    assert.equal(await cancel.count(), 0)
     assert.equal(await savedPrice.locator('code').textContent(), 'p.price_color')
-    assert.equal(await ui.getByRole('button', { name: /Получить предпросмотр/ }).isEnabled(), true)
+    assert.equal(await preview.isEnabled(), true)
     await savedPrice.getByRole('button', { name: 'Изменить', exact: true }).click()
     assert.equal(await ui.locator('#scout-visual-name').inputValue(), 'price')
     assert.equal(await ui.locator('#scout-visual-css').inputValue(), 'p.price_color')
     await cancel.click()
+    await ui.getByRole('button', { name: 'Правило CSS', exact: true }).click()
     await ui.locator('#scout-visual-name').fill('title')
     await ui.locator('#scout-visual-css').fill('h3')
     await ui.getByRole('button', { name: 'Проверить правило', exact: true }).click()
@@ -149,15 +153,17 @@ module.exports = async (browser, output) => {
     await frame.locator('p').first().click()
     await ui.getByRole('button', { name: 'Отменить выбор', exact: true }).click()
     assert.equal(await ui.locator('.scout-visual-fields li').count(), 1)
-    assert.equal(await ui.getByRole('button', { name: /Получить предпросмотр/ }).isEnabled(), true)
+    assert.equal(await preview.isEnabled(), true)
     await ui.locator('[role=treeitem]').first().focus()
     await page.keyboard.press('ArrowDown')
     await page.keyboard.press('Enter')
     await ui.locator('.scout-prototype-selected-label').waitFor()
     for (const width of [1440, 1024, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 1100 })
-      if (width <= 1100) {
-        for (const tab of ['Структура', 'Поле', 'Страница'])
+      const tabs = ui.locator('.scout-prototype-tabs')
+      if (width <= 768) await tabs.waitFor({ state: 'visible' })
+      if (await tabs.isVisible()) {
+        for (const tab of ['Структура', 'Поля', 'Страница'])
           await ui
             .locator('.scout-prototype-tabs')
             .getByRole('tab', { name: new RegExp('^' + tab) })
@@ -185,12 +191,12 @@ module.exports = async (browser, output) => {
     })
     await frame.locator('p').first().click()
     await ui.getByRole('alert').filter({ hasText: 'Версия снимка изменилась' }).waitFor()
-    assert.equal(await ui.getByRole('button', { name: /Получить предпросмотр/ }).isDisabled(), true)
+    assert.equal(await preview.count(), 0)
     // A late branch expansion cannot carry old node IDs into a new snapshot.
     await page.evaluate(() => {
       window.__scoutTest.visual.treeError = 0
     })
-    await ui.locator('.scout-visual-source button').click()
+    await ui.getByRole('button', { name: 'Загрузить страницу заново', exact: true }).click()
     await ui.locator('[role=treeitem]').first().waitFor()
     await page.evaluate(() => {
       window.__scoutTest.visual.defer = 'tree'
@@ -201,7 +207,7 @@ module.exports = async (browser, output) => {
     await page.evaluate(() => window.__scoutTest.visual.release())
     assert.equal(await ui.locator('[role=treeitem]').count(), 0)
     assert.equal(await ui.locator('iframe').count(), 0)
-    await ui.locator('.scout-visual-source button').click()
+    await ui.getByRole('button', { name: 'Загрузить страницу', exact: true }).click()
     await frame.locator('p').first().waitFor()
     // Saved rules survive reload, but each needs explicit verification on the new snapshot.
     async function reviewCard() {
@@ -217,14 +223,15 @@ module.exports = async (browser, output) => {
     }
     await reviewCard()
     await reviewField('price')
+    await ui.getByRole('button', { name: 'Правило CSS', exact: true }).click()
     await ui.locator('#scout-visual-name').fill('title')
     await ui.locator('#scout-visual-css').fill('h3')
     await ui.getByRole('button', { name: 'Проверить правило', exact: true }).click()
     await ui.getByRole('button', { name: 'Принять поле', exact: true }).click()
     assert.equal(await ui.locator('.scout-field-verification[data-verified=true]').count(), 2)
-    await ui.locator('.scout-visual-source button').click()
+    await refresh.click()
     await frame.locator('p').first().waitFor()
-    assert(await ui.getByRole('button', { name: /Получить предпросмотр/ }).isDisabled())
+    assert.equal(await preview.count(), 0)
     await ui
       .locator('#scout-preview-requirements')
       .filter({ hasText: 'Сначала проверьте и примите правило карточки' })
@@ -258,10 +265,10 @@ module.exports = async (browser, output) => {
       .locator('#scout-preview-requirements')
       .filter({ hasText: 'Все поля проверены: 2' })
       .waitFor()
-    assert(await ui.getByRole('button', { name: /Получить предпросмотр/ }).isEnabled())
+    assert(await preview.isEnabled())
     await ui.locator('#scout-visual-page').check()
-    await ui.locator('#scout-visual-name').fill('page_price')
     await frame.locator('p').first().click()
+    await ui.locator('#scout-visual-name').fill('page_price')
     await ui.getByRole('button', { name: 'Проверить правило', exact: true }).click()
     await ui.locator('.scout-visual-check').waitFor()
     const single = await page.evaluate(

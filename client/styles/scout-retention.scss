@@ -1,6 +1,231 @@
 .scout-workflow.scout-retention {
+  .retention-sections {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 1rem;
+  }
+  .form-card,
+  .retention-limit-card,
+  .retention-box,
+  .retention-policy-actions {
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-lg);
+    background: var(--ui-surface);
+  }
+  h2,
+  h3 {
+    font-size: 1rem;
+    line-height: 1.4;
+    font-weight: 600;
+    margin: 0 0 1rem;
+  }
+  .retention-policy-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.63fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 1rem;
+  }
+  .retention-limit-card,
+  .retention-box,
+  .retention-review section {
+    padding: 1.25rem;
+    min-width: 0;
+  }
+  .retention-policy-side {
+    display: grid;
+    gap: 1rem;
+  }
+  .retention-metric {
+    font-size: 2rem;
+    font-weight: 650;
+  }
+  .retention-policy-side p {
+    margin: 0.75rem 0 0;
+  }
+  .retention-policy-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: center;
+    padding: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+  }
+  .retention-policy > section {
+    position: relative;
+  }
+  .retention-policy > section:has(.retention-policy-layout):not(:has([role='alert'])) > h2 {
+    position: absolute;
+    top: 1.25rem;
+    inset-inline-start: 1.25rem;
+    margin: 0;
+  }
+  .retention-policy
+    > section:has(.retention-policy-layout):not(:has([role='alert']))
+    > .policy-version {
+    position: absolute;
+    top: 1.25rem;
+    inset-inline-start: calc(62% - 6.5rem);
+    margin: 0;
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--ui-pill);
+    background: var(--ui-surface-2);
+  }
+  .retention-policy > section:not(:has([role='alert'])) .retention-limit-card {
+    padding-top: 3.75rem;
+  }
+  .retention-policy-form .scout-retention-policy-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.875rem;
+  }
+  .retention-policy-form .form-field {
+    border: 0;
+    padding: 0;
+  }
+  .retention-policy-form .form-field__label {
+    font-size: 0.8125rem;
+    color: var(--ui-text);
+    font-weight: 600;
+    padding: 0 0 0.375rem;
+  }
+  .retention-policy-form .form-control {
+    border-radius: var(--ui-radius);
+    min-height: 44px;
+  }
+  .retention-policy-form .scout-retention-checkbox {
+    font-size: 0.75rem;
+    color: var(--ui-text-muted);
+    margin: 0.375rem 0;
+  }
+  .retention-policy-form .scout-retention-checkbox input {
+    margin-top: 0.125rem;
+  }
+  .retention-review .form-card {
+    max-width: 66.25rem;
+  }
+  .retention-review .alert {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+  }
+  .retention-review .alert svg {
+    flex-shrink: 0;
+  }
+  .retention-review .alert p {
+    margin: 0.25rem 0 0;
+  }
+  .retention-review-table {
+    width: 100%;
+    border-spacing: 0;
+    border-collapse: separate;
+    border-radius: var(--ui-radius);
+    border: 1px solid var(--ui-border);
+    overflow: hidden;
+    font-size: 0.8125rem;
+  }
+  .retention-review-table td,
+  .retention-review-table th {
+    text-align: start;
+    padding: 0.75rem;
+  }
+  .retention-review-table thead th {
+    background: var(--ui-surface-2);
+    color: var(--ui-text-muted);
+  }
+  .retention-review-table tbody th,
+  .retention-review-table tbody td {
+    border-top: 1px solid var(--ui-border);
+    font-weight: 400;
+  }
+  &[data-view='preview'] .retention-sections {
+    grid-template-columns: minmax(15rem, 1fr) minmax(0, 1.86fr);
+  }
+  &[data-view='preview'] .retention-sections > * {
+    grid-column: 1 / -1;
+  }
+  &[data-view='preview'] .retention-selection {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  &[data-view='operation'] .retention-sections:has(.retention-protection) {
+    grid-template-columns: minmax(0, 1.38fr) minmax(0, 1fr);
+  }
+  &[data-view='operation'] .retention-sections > * {
+    grid-column: 1 / -1;
+  }
+  &[data-view='operation'] .retention-protection {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .retention-preview,
+  .retention-operation {
+    &,
+    > .form-card__body,
+    > .form-card__body > section {
+      display: contents;
+    }
+    h2 {
+      z-index: 1;
+      padding: 1.25rem 1.25rem 0;
+      margin: 0;
+      grid-row: 1;
+      align-self: start;
+    }
+  }
+  .retention-snapshot-summary,
+  .retention-objects {
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-lg);
+    background: var(--ui-surface);
+    padding: 1.25rem;
+    min-width: 0;
+  }
+  .retention-snapshot-summary {
+    grid-row: 1;
+    padding-top: 3.75rem;
+  }
+  .retention-preview h2,
+  .retention-preview .retention-snapshot-summary {
+    grid-column: 2;
+  }
+  .retention-operation h2,
+  .retention-operation .retention-snapshot-summary {
+    grid-column: 1;
+  }
+  .retention-objects {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .retention-objects > button:first-child {
+    float: inline-end;
+    margin-bottom: 0.5rem;
+  }
+  .retention-item-table {
+    clear: both;
+  }
+  .retention-selection fieldset > legend {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .retention-selection .scout-retention-checkbox {
+    padding: 0.5rem 0.75rem;
+    background: var(--ui-surface);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius);
+  }
+  .retention-selection .scout-retention-checkbox:has(input:checked) {
+    background: var(--ui-accent-soft);
+    border-color: var(--ui-accent);
+  }
+  .retention-selection .scout-retention-checkbox > input {
+    accent-color: var(--ui-accent);
+  }
+  .retention-preview > .form-card__body > section > .btn-danger {
+    margin-top: 0.5rem;
+  }
   .scout-retention-card {
-    margin: 1.5rem 0;
+    margin: 0;
   }
   .scout-retention-card section {
     padding: 1.25rem;
@@ -57,11 +282,58 @@
   .scout-retention-items {
     list-style: none;
     padding: 0;
+    margin: 0;
+  }
+  .retention-item-table {
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius);
     margin: 1rem 0;
+    overflow: hidden;
+  }
+  .retention-table-head,
+  .scout-retention-items > li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.45fr);
+    gap: 0.75rem;
+    align-items: start;
+  }
+  .retention-table-head {
+    padding: 0.7rem;
+    color: var(--ui-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: var(--ui-surface-2);
   }
   .scout-retention-items > li {
-    padding: 1rem 0;
-    border-bottom: 1px solid var(--ui-border);
+    padding: 0.7rem;
+    font-size: 0.8125rem;
+    border-top: 1px solid var(--ui-border);
+  }
+  .scout-retention-items > li > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .scout-retention-items > li > p {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+  .scout-retention-items .scout-retention-details {
+    display: block;
+  }
+  .retention-status {
+    justify-self: start;
+    padding: 0.2rem 0.5rem;
+    border-radius: var(--ui-pill);
+    background: var(--ui-surface-2);
+  }
+  .retention-status[data-state='candidate'],
+  .retention-status[data-state='skipped'] {
+    background: var(--ui-warning-soft);
+    color: var(--bs-warning-text-emphasis);
+  }
+  .retention-status[data-state='failed'] {
+    background: var(--ui-danger-soft);
+    color: var(--bs-danger-text-emphasis);
   }
   .scout-retention-item-heading {
     display: flex;
@@ -75,7 +347,41 @@
   button {
     overflow-wrap: anywhere;
   }
+  @media (max-width: 780px) {
+    .retention-policy-layout,
+    &[data-view='preview'] .retention-sections,
+    &[data-view='operation'] .retention-sections:has(.retention-protection) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    &[data-view='preview'] .retention-selection,
+    &[data-view='operation'] .retention-protection {
+      grid-column: 1 / -1;
+    }
+    .retention-preview h2,
+    .retention-preview .retention-snapshot-summary {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+    .retention-objects {
+      grid-row: 3;
+    }
+    &[data-view='operation'] .retention-protection {
+      grid-row: 2;
+    }
+    .retention-policy
+      > section:has(.retention-policy-layout):not(:has([role='alert']))
+      > .policy-version {
+      inset-inline-start: auto;
+      inset-inline-end: 1.25rem;
+    }
+  }
   @media (max-width: 600px) {
+    .retention-table-head {
+      display: none;
+    }
+    .scout-retention-items > li {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
     .scout-retention-card section {
       padding: 0.85rem;
     }

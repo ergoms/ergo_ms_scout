@@ -201,6 +201,8 @@ class VisualSnapshot(PublicIdMixin, models.Model):
     final_url = models.TextField(blank=True, default='')
     status = models.CharField(max_length=12, default='queued')
     body = models.BinaryField(default=bytes)
+    editor_html = models.TextField(blank=True, default='')
+    editor_tags = models.JSONField(blank=True, default=dict)
     charset = models.CharField(max_length=40, blank=True, default='')
     error_code = models.CharField(max_length=64, blank=True, default='')
     error_detail = models.CharField(max_length=400, blank=True, default='')

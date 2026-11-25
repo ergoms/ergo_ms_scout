@@ -120,7 +120,7 @@ def visual_response(method):
             uid = UUID(str(uid))
         except (ValueError, TypeError):
             return method(self, request, **({'public_id': public_id} if public_id else {}))
-        row = VisualSnapshot.objects.filter(public_id=uid, user_public_id=request.user.public_id).first()
+        row = VisualSnapshot.objects.only('pk').filter(public_id=uid, user_public_id=request.user.public_id).first()
         if row is None:
             return method(self, request, **({'public_id': public_id} if public_id else {}))
         with read_resource(f'visual:{row.pk}'):

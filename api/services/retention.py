@@ -245,7 +245,8 @@ def build_manifest(owner, policy, selection, at):
             if RetentionLease.objects.filter(resource=f'visual:{snapshot.pk}', expires_at__gt=timezone.now()).exists():
                 excluded.append(_item('visual_snapshots', snapshot, reason='operation_in_progress'))
             else:
-                manifest.append(_item('visual_snapshots', snapshot, bytes=len(snapshot.body), executable=True,
+                size = len(snapshot.body) + len(snapshot.editor_html.encode('utf-8'))
+                manifest.append(_item('visual_snapshots', snapshot, bytes=size, executable=True,
                                       eligible_at=(snapshot.created_at + timedelta(hours=1)).isoformat()))
     manifest.sort(key=lambda value: (value['kind'], value['public_id']))
     return manifest, excluded

@@ -8,8 +8,7 @@ module.exports = async (browser, output) => {
   try {
     await page.goto(pathToFileURL(path.join(output, 'fixture.html')).href + '#/product')
     const ui = page.locator('.scout-workflow')
-    await ui.locator('.scout-mode').nth(1).click()
-    await ui.getByRole('button', { name: 'Далее: источник и правила' }).click()
+    await ui.getByRole('button', { name: 'Выбрать на странице', exact: true }).click()
     await ui.locator('#scout-visual-url').fill('https://books.toscrape.com/')
     await ui.getByRole('button', { name: 'Загрузить страницу', exact: true }).click()
 
@@ -28,8 +27,14 @@ module.exports = async (browser, output) => {
       page.evaluate(() => window.__scoutTest.calls.filter(([method]) => method === 'download'))
     assert.deepEqual(await downloads(), [])
     const frame = page.frameLocator('.scout-snapshot-frame iframe')
-    assert.equal(await frame.locator('[data-scout-image]').textContent(), 'Изображение')
+    const placeholder = frame.locator('span[data-scout-image]')
+    assert.equal(await placeholder.textContent(), 'Изображение')
+    assert.equal(await placeholder.evaluate((node) => getComputedStyle(node).cursor), 'pointer')
     assert.equal(await frame.locator('img,[src]').count(), 0)
+    await first.click()
+    await button.waitFor({ state: 'detached' })
+    await placeholder.click()
+    await button.waitFor()
 
     const [file] = await Promise.all([page.waitForEvent('download'), button.press('Enter')])
     assert.equal(file.suggestedFilename(), 'scout-n61.png')
@@ -81,7 +86,7 @@ module.exports = async (browser, output) => {
     })
     await button.click()
     await busy.waitFor()
-    await ui.locator('.scout-visual-source button').click()
+    await ui.getByRole('button', { name: 'Обновить снимок', exact: true }).click()
     await first.waitFor()
     await page.evaluate(() => window.__scoutTest.visual.release())
     await first.press('ArrowRight')
@@ -99,19 +104,65 @@ module.exports = async (browser, output) => {
 
 async function checkImageCollection(page, ui, frame) {
   const externalRequests = []
-  page.on('request', (request) => {
-    if (request.url().startsWith('https://books.toscrape.com/'))
-      externalRequests.push(request.url())
+  await page.route('https://books.toscrape.com/**', (route) => {
+    externalRequests.push(route.request().url())
+    return route.abort()
   })
   await page.evaluate(() => {
     window.__scoutTest.calls.length = 0
+    window.__scoutTest.visual.styled = true
   })
-  const placeholder = frame.locator('[data-scout-image]')
-  assert.equal(await placeholder.evaluate((node) => getComputedStyle(node).cursor), 'pointer')
-  await placeholder.click()
+  // Chromium reports a CSP denial as a request failure before it reaches routing.
+  const [blockedStyle] = await Promise.all([
+    page.waitForEvent('requestfailed', (request) =>
+      request.url() === 'https://books.toscrape.com/blocked-style.png',
+    ),
+    ui.getByRole('button', { name: 'Обновить снимок', exact: true }).click(),
+  ])
+  assert.match(blockedStyle.failure()?.errorText || '', /^(csp|net::ERR_BLOCKED_BY_CSP)$/)
+  const photo = frame.getByRole('img', { name: 'Cover', exact: true })
+  assert.equal(await photo.getAttribute('data-scout-node'), 'n61')
+  assert.equal(await photo.getAttribute('data-scout-image'), 'preview')
+  assert.deepEqual(
+    await photo.evaluate(async (node) => {
+      await node.decode()
+      const style = getComputedStyle(node)
+      const card = getComputedStyle(node.parentElement)
+      const { x, y, width, height } = node.getBoundingClientRect()
+      const nativeHit = document.elementFromPoint(x + width / 2, y + height / 2)
+      return {
+        width,
+        height,
+        padding: style.padding,
+        border: style.borderWidth,
+        cursor: style.cursor,
+        grid: card.display,
+        gap: card.columnGap,
+        nativeHit: nativeHit?.getAttribute('data-scout-node'),
+      }
+    }),
+    {
+      width: 96,
+      height: 72,
+      padding: '0px',
+      border: '0px',
+      cursor: 'pointer',
+      grid: 'grid',
+      gap: '12px',
+      nativeHit: 'n62',
+    },
+  )
+  const decoration = frame.locator('.photo-decoration')
+  const lastCheck = () =>
+    page.evaluate(
+      () => window.__scoutTest.calls.filter((call) => call[1].endsWith('/check/')).at(-1)[2].field,
+    )
+  assert.equal(await page.evaluate(() => window.__snapshotScriptRan), undefined)
+  await decoration.click()
   await ui.locator('#scout-visual-name').fill('cover')
   const verify = ui.getByRole('button', { name: 'Проверить правило', exact: true })
   await verify.click()
+  assert.equal((await lastCheck()).node_id, 'n61')
   await ui
     .getByText('Во время сбора Scout сохранит выбранные изображения.', { exact: false })
     .waitFor()
@@ -121,10 +172,6 @@ async function checkImageCollection(page, ui, frame) {
   const edit = saved.getByRole('button', { name: 'Изменить', exact: true })
   await edit.click()
   await verify.click()
-  const lastCheck = () =>
-    page.evaluate(
-      () => window.__scoutTest.calls.filter((call) => call[1].endsWith('/check/')).at(-1)[2].field,
-    )
   assert.equal((await lastCheck()).value_source, 'image')
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
 
@@ -136,10 +183,14 @@ async function checkImageCollection(page, ui, frame) {
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
   assert.equal(await saved.getByText(/Изображение/).count(), 0)
   await edit.click()
-  await placeholder.click()
+  await decoration.click()
   await verify.click()
+  assert.equal((await lastCheck()).node_id, 'n61')
+  await ui
+    .getByText('Во время сбора Scout сохранит выбранные изображения.', { exact: false })
+    .waitFor()
   await ui.getByRole('button', { name: 'Сохранить изменения', exact: true }).click()
-  await ui.getByRole('button', { name: /Получить предпросмотр/ }).click()
+  await ui.getByRole('button', { name: /^К предпросмотру/ }).click()
   await ui.getByRole('heading', { name: 'Предпросмотр готов' }).waitFor()
   await ui.getByText('Будет скачано во время сбора', { exact: true }).first().waitFor()
   const field = await page.evaluate(() => window.__scoutTest.job.revision.fields[0])
@@ -166,7 +217,7 @@ async function checkImageCollection(page, ui, frame) {
   await page.evaluate(() => {
     window.__scoutTest.setStatus('completed')
   })
-  await ui.getByRole('heading', { name: 'Завершён', exact: true }).waitFor()
+  await ui.getByRole('heading', { name: 'Сбор завершён', exact: true }).waitFor()
   await ui.getByText('Файл сохранён', { exact: true }).first().waitFor()
   await ui.getByText('Не удалось скачать файл', { exact: true }).first().waitFor()
   await ui.getByText('Пропущено из-за лимита сбора', { exact: true }).first().waitFor()
@@ -190,6 +241,6 @@ async function checkImageCollection(page, ui, frame) {
   await resultButton.click()
   await ui.getByText('Файл отсутствует или срок его хранения истёк.', { exact: true }).waitFor()
   console.log(
-    'Image collection passed: snapshot click, saved image field, preview, approval and result download.',
+    'Image collection passed: click through photo decoration, saved image field, preview, approval and result download.',
   )
 }

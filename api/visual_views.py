@@ -49,12 +49,12 @@ class VisualSnapshotDetailView(BaseAPIView):
 
     @visual_response
     def get(self, request, public_id):
-        snapshot = _get_snapshot(request.user, public_id)
+        snapshot = _get_snapshot(request.user, public_id, with_editor=True)
         status, error = snapshot_status(snapshot)
         result = {'public_id': str(snapshot.public_id), 'status': status}
         if status == 'ready':
-            document = VisualDocument(bytes(snapshot.body), snapshot.charset)
-            result.update(final_url=snapshot.final_url, html=document.editor_html(), tree_version=tree_version(snapshot))
+            editor_html = snapshot.editor_html or VisualDocument(bytes(snapshot.body), snapshot.charset).editor_html()
+            result.update(final_url=snapshot.final_url, html=editor_html, tree_version=tree_version(snapshot))
         if error is not None:
             result['error'] = error
         return Response(result, headers={'Cache-Control': 'no-store'})
@@ -164,9 +164,12 @@ def _request_object(data):
     return data
 
 
-def _get_snapshot(user, public_id):
+def _get_snapshot(user, public_id, *, with_editor=False):
+    snapshots = VisualSnapshot.objects.defer('editor_tags')
+    if not with_editor:
+        snapshots = snapshots.defer('editor_html')
     return get_object_or_404(
-        VisualSnapshot,
+        snapshots,
         public_id=public_id,
         user_public_id=getattr(user, 'public_id', None),
         created_at__gt=timezone.now() - SNAPSHOT_TTL,
