@@ -130,6 +130,16 @@ class SitemapIndexTests(TestCase):
         self.assertEqual(run.crawl_urls.filter(state='done').count(),2)
         self.assertFalse(run.snapshots.filter(source_url__contains='/sale/').exists())
 
+    def test_gzipped_sitemap_still_rejects_more_than_one_million_unpacked_bytes(self):
+        xml = xml_urls([self.site.origin + '/products/k-01'])
+        self.site.xml['/large.xml.gz'] = xml.ljust(1_000_001)
+        run = self.collect('/large.xml.gz')
+        self.assertEqual(run.status, 'failed')
+        task = run.tasks.get(idempotency_key='sitemap')
+        self.assertEqual(task.error_code, 'too_large')
+        self.assertEqual(task.payload['xml_allowance'], 1_000_000)
+        self.assertFalse(run.crawl_urls.exists())
+
     def test_pending_scan_survives_lost_publication_and_lease_recovery(self):
         run_id,endpoint=self.prepare()
         with patch('modules.scout.api.views.schedule_publish'):

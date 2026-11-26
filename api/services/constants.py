@@ -54,9 +54,10 @@ TERMINAL_RUN_STATUSES = (
 
 OPEN_TASK_STATUSES = (TASK_PENDING, TASK_LEASED, TASK_RUNNING, TASK_RETRY_WAIT)
 
+MAX_HTML_BYTES = 4_000_000
 DEFAULT_LIMITS = {
     'max_pages': 5,
-    'max_bytes': 1_000_000,
+    'max_bytes': MAX_HTML_BYTES,
     'timeout_seconds': 20,
 }
 
