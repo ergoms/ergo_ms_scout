@@ -23,6 +23,7 @@ from modules.scout.api.services.constants import (
 from modules.scout.api.services.crawl_budget import reconcile
 from modules.scout.api.services.errors import FetchError
 from modules.scout.api.services.frontier import discover, remember
+from modules.scout.api.services.preview import preview_rows
 from modules.scout.api.services.public_http import fetch_public_html
 from modules.scout.api.services.runs import approve_run, create_job, explore_job, pause_run, resume_run, start_run, _finish_if_idle
 from modules.scout.api.services.tasks_exec import _claim, _fetch, publish_ready, recover_expired_leases, run_one
@@ -129,6 +130,11 @@ def _site(port_holder):
 
 
 def _body(path, host):
+    if path in ('/large-html', '/large-html/item'):
+        content = '<h1>Item</h1>'
+        if path == '/large-html':
+            content = '<h1>Catalog</h1><a href="/large-html/item">Item</a>'
+        return '<html><body><!--' + ' ' * 2_100_000 + '-->' + content + '</body></html>'
     if path == '/other-port':
         return '<h1>Port</h1><a href="http://127.0.0.1:1/private">private</a>'
     if path.startswith('/storm'):
@@ -355,6 +361,26 @@ class CrawlTests(TestCase):
         self.assertEqual(run.tasks.filter(kind=TASK_FETCH).count(), 1)
         self.assertFalse(run.tasks.filter(kind=TASK_CRAWL).exists())
         self.assertEqual(run.records.count(), 1)
+
+    def test_large_html_keeps_fields_and_discovery_links_at_end_of_page(self):
+        seed = f'{self.origin}/large-html'
+        job = create_job(user_public_id=self.user.public_id, title='Большие страницы',
+                         seed_urls=[seed], fields=FIELDS, crawl={'mode': 'site'})
+        run = explore_job(job=job, user_public_id=self.user.public_id)
+        publish_ready(str(run.public_id))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'awaiting_confirmation')
+        self.assertEqual([row['values']['title']['normalized'] for row in preview_rows(run)], ['Catalog'])
+        self.assertFalse(run.records.exists())
+
+        approve_run(run=run, user_public_id=self.user.public_id)
+        run = start_run(run=run)
+        publish_ready(str(run.public_id))
+        run.refresh_from_db()
+        self.assertEqual(run.status, RUN_COMPLETED)
+        self.assertCountEqual(run.records.values_list('values__title__normalized', flat=True), ['Catalog', 'Item'])
+        snapshots = run.snapshots.filter(byte_size__gt=2_100_000).values_list('source_url', flat=True)
+        self.assertCountEqual(snapshots, [seed, f'{seed}/item'])
 
     def test_unknown_link_status_keeps_crawl_for_reused_snapshot(self):
         with patch('modules.scout.api.services.page_links.has_crawl_links', return_value=None):

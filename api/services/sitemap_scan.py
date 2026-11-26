@@ -12,6 +12,7 @@ from .url_norm import canonical_host, host_allowed, resolve_url, rules_match, ur
 MAX_MAPS = 20
 MAX_DEPTH = 3
 MAX_XML_BYTES = 5_000_000
+MAX_XML_DOCUMENT_BYTES = 1_000_000
 MAX_URL_ENTRIES = 50_000
 STATE_KEY = 'sitemap_scan'
 
@@ -56,7 +57,7 @@ def reserve_xml(run, task):
         # Ошибка будет записана обычной попыткой, без HTTP-запроса.
         allowance = 0
     else:
-        allowance = min(run.job_revision.limits['max_bytes'], available)
+        allowance = min(run.job_revision.limits['max_bytes'], MAX_XML_DOCUMENT_BYTES, available)
         if task.payload.get('source') == 'robots':
             allowance = min(allowance, MAX_ROBOTS_BYTES)
         state['charged_bytes'] += allowance

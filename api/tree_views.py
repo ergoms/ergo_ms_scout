@@ -19,6 +19,7 @@ from src.core.utils.base.base_views import BaseAPIView
 
 from .models import VisualSnapshot
 from .permissions import CanConfigureScout
+from .services.constants import MAX_HTML_BYTES
 from .services.errors import ScoutError
 from .services.http_fetch import IMAGE_EXTENSIONS
 from .services.retention_locks import read_resource
@@ -116,7 +117,7 @@ class _SnapshotReadView(BaseAPIView):
 
     @staticmethod
     def _document(snapshot):
-        if len(snapshot.body) > 1_000_000:
+        if len(snapshot.body) > MAX_HTML_BYTES:
             raise ScoutError('tree_too_large', 'Снимок превышает допустимый объём')
         try:
             return VisualDocument(bytes(snapshot.body), snapshot.charset)
