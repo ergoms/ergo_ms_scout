@@ -150,6 +150,7 @@ class DispatchRequestTests(TestCase):
         self.assertIsNone(self.run.dispatch_requested_until)
 
 
+@override_settings(SCOUT_AI_LOCAL_ONLY=False)
 class FlowTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_superuser(
@@ -237,6 +238,33 @@ class FlowTests(TestCase):
             publish_ready(run_id)
             self.assertEqual(client.get(path, {'summary': 1}).data['status'], RUN_COMPLETED)
             model.assert_called_once()
+
+    @override_settings(SCOUT_AI_ENABLED=True)
+    def test_ai_single_page_price_text_and_unsupported_currency(self):
+        client, payload = self._plan_suggestion_input(body=(
+            '<html><body><h1>Book</h1><p class="price">£51.77</p></body></html>'.encode('utf-8')
+        ))
+        fields = [
+            {'name': 'title', 'kind': 'css', 'selector': 'h1', 'scope': 'page', 'many': False},
+            {'name': 'price', 'kind': 'css', 'selector': 'p.price', 'scope': 'page', 'many': False},
+        ]
+        with patch('modules.scout.api.services.plan_suggestions.bridge') as provider:
+            provider.call.return_value = json.dumps({'record': None, 'fields': [
+                fields[0], {**fields[1], 'conversion': {
+                    'type': 'money', 'currency': 'GBP', 'decimal_separator': '.',
+                }},
+            ]})
+            rejected = client.post('/api/scout/plan-suggestions/', payload, format='json')
+            self.assertEqual(rejected.status_code, 502)
+            self.assertEqual(rejected.data['code'], 'invalid_model_response')
+            self.assertNotIn('draft', rejected.data)
+            provider.call.return_value = json.dumps({'record': None, 'fields': fields})
+            accepted = client.post('/api/scout/plan-suggestions/', payload, format='json')
+            self.assertEqual(accepted.status_code, 200, accepted.data)
+            self.assertIsNone(accepted.data['draft']['record'])
+            self.assertEqual(accepted.data['draft']['fields'], fields)
+            self.assertFalse(Job.objects.exists())
+            self.assertFalse(Run.objects.exists())
 
     @override_settings(SCOUT_AI_ENABLED=True)
     def test_ai_suggestion_errors_leave_manual_setup_available(self):

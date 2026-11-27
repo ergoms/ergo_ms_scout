@@ -49,11 +49,32 @@ class PageTypeSuggestionTests(TestCase):
     def post(self,body=None):
         return self.client.post('/api/scout/plan-suggestions/',body or self.body,format='json')
 
+    def test_value_bound_override_is_rejected_with_snapshot_and_type(self):
+        VisualSnapshot.objects.filter(public_id=self.samples[1]['snapshot_public_id']).update(
+            body='<h1>Book A</h1><p class="price">1250,00 ₽</p>'.encode())
+        reply = copy.deepcopy(self.rules)
+        reply['page_types'][0]['selectors']['price'] = {
+            'kind': 'xpath', 'selector': '//p[contains(text(), "1250,00")]',
+        }
+        with patch('modules.scout.api.services.plan_suggestions.bridge') as provider:
+            provider.call.return_value = json.dumps(reply)
+            response = self.post()
+        self.assertEqual(response.status_code, 422, response.data)
+        self.assertEqual(response.data['code'], 'selector')
+        self.assertEqual(response.data['path'], '/crawl/page_types/1/selectors/price/selector')
+        self.assertEqual(response.data['snapshot_public_id'], self.samples[1]['snapshot_public_id'])
+        self.assertEqual(response.data['page_type_id'], 'product')
+        self.assertIn('зависит от текущего', response.data['detail'])
+        self.assertFalse(Job.objects.exists())
+
     def test_one_proposal_then_normal_preview_confirmation_and_collection_without_model(self):
         with patch('modules.scout.api.services.plan_suggestions.bridge') as provider:
             provider.call.return_value=json.dumps(self.rules)
             response=self.post()
             self.assertEqual(response.status_code,200,response.data)
+            schema = provider.call.call_args.kwargs['format']
+            self.assertEqual(schema['properties']['fields']['items']['properties']['kind']['enum'], ['css'])
+            self.assertEqual(schema['properties']['page_types']['items']['properties']['id']['enum'], ['product'])
             self.assertEqual(Job.objects.count(),0)
             draft=response.data['draft']
             self.assertEqual(draft['crawl']['mode'],'site')

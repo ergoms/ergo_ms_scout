@@ -11,7 +11,7 @@ from .html_extract import check_plan_selectors
 from .page_types import effective_fields,matching_page_types
 from .plan import normalize_plan
 from .plan_suggestions import (
-    SuggestionSelectorError,_check_rule,_generate,_invalid_model_response,_model_unavailable,_read_object,_read_rules,_sample_html,
+    SuggestionSelectorError,_check_rule,_check_stability,_generate,_invalid_model_response,_model_unavailable,_read_object,_read_rules,_sample_html,_response_schema,
 )
 from .url_norm import canonical_host
 
@@ -36,11 +36,43 @@ _SYSTEM_PAGES = (
     'количество {"type":"integer"}, дата {"type":"date","format":"DD.MM.YYYY"}; при conversion many=false. '
     'Десятичный разделитель укажи как в примерах и цели пользователя. '
     'Не добавляй поля, которых нет в цели. '
+    'Правила должны находить те же элементы после смены названия, цены или другого извлекаемого текста. '
+    'Не вставляй наблюдаемое название, цену, дату или сумму в условие селектора. '
+    'Предпочитай теги и существующие class/id. Постоянная подпись вне извлекаемого значения допустима. '
     'Пример: {"record":null,"fields":[{"name":"title","kind":"css","selector":"h1",'
     '"scope":"page","many":false}],"page_types":[{"id":"product","selectors":'
     '{"title":{"kind":"css","selector":"h1"}}}]}. '
     'Имена id возьми из запроса, этот пример не задаёт имя типа.'
 )
+
+
+def _pages_response_schema(goal, types):
+    schema = _response_schema(goal)
+    extracting = [kind['id'] for kind in types if kind['action'] == 'extract']
+    kinds = ['css', 'xpath'] if 'xpath' in goal.casefold() else ['css']
+    schema['required'].append('page_types')
+    schema['properties']['page_types'] = {
+        'type': 'array', 'minItems': len(extracting), 'maxItems': len(extracting),
+        'items': {
+            'type': 'object', 'additionalProperties': False,
+            'required': ['id', 'selectors'],
+            'properties': {
+                'id': {'enum': extracting},
+                'selectors': {
+                    'type': 'object', 'minProperties': 1, 'maxProperties': 30,
+                    'additionalProperties': {
+                        'type': 'object', 'additionalProperties': False,
+                        'required': ['kind', 'selector'],
+                        'properties': {
+                            'kind': {'enum': kinds},
+                            'selector': {'type': 'string', 'minLength': 1, 'maxLength': 500},
+                        },
+                    },
+                },
+            },
+        },
+    }
+    return schema
 
 
 def suggest_pages(examples, goal):
@@ -80,7 +112,8 @@ def suggest_pages(examples, goal):
         {**kind,'html':_sample_html(bytes(sample['snapshot'].body),sample['snapshot'].charset,per_sample)}
         for sample,kind in zip(examples,types)
     ]},ensure_ascii=False)
-    reply=_read_object(_generate(prompt,system_prompt=_SYSTEM_PAGES))
+    reply=_read_object(_generate(prompt,system_prompt=_SYSTEM_PAGES,
+                                response_schema=_pages_response_schema(goal, types)))
     if set(reply)!={'record','fields','page_types'}:
         raise _invalid_model_response()
     try:
@@ -139,6 +172,15 @@ def suggest_pages(examples, goal):
             failure=SuggestionSelectorError(code,path)
             failure.details={'snapshot_public_id':str(sample['snapshot'].public_id),'page_type_id':kind['id']}
             raise failure
+        try:
+            _check_stability(bytes(sample['snapshot'].body), effective_fields(plan['fields'], kind),
+                             plan['record'], charset=sample['snapshot'].charset)
+        except SuggestionSelectorError as failure:
+            if failure.path.startswith('/fields/'):
+                name = plan['fields'][int(failure.path.split('/')[2])]['name']
+                failure.path = f'/crawl/page_types/{index}/selectors/{name}/selector'
+            failure.details = {'snapshot_public_id': str(sample['snapshot'].public_id), 'page_type_id': kind['id']}
+            raise
     draft={name:plan[name] for name in ('seed_urls','record','fields','crawl')}
     proxy_id=next(iter(proxy_ids))
     if proxy_id:
